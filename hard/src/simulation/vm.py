@@ -10,6 +10,7 @@ Bytecode instruction set:
   OP_ADD          — pop b, pop a, push a+b
   OP_SUB          — pop b, pop a, push a-b
   OP_MUL          — pop b, pop a, push a*b
+  OP_DIV          — pop b, pop a, push a/b (safe: clamp denominator)
   OP_SIN          — pop a, push sin(a)
   OP_COS          — pop a, push cos(a)
   OP_TANH         — pop a, push tanh(a)
@@ -30,6 +31,7 @@ OP_VAR = 1
 OP_ADD = 10
 OP_SUB = 11
 OP_MUL = 12
+OP_DIV = 13       # safe division: a/b with clamp on b (used in derivatives)
 OP_SIN = 20
 OP_COS = 21
 OP_TANH = 22
@@ -54,18 +56,47 @@ VAR_NEIGHBOR_COUNT = 8
 
 
 @ti.func
+def _get_var(var_idx: ti.i32,
+             v0: ti.f32, v1: ti.f32, v2: ti.f32, v3: ti.f32,
+             v4: ti.f32, v5: ti.f32, v6: ti.f32, v7: ti.f32,
+             v8: ti.f32) -> ti.f32:
+    """Select variable by index using explicit branching (no dynamic indexing)."""
+    result = 0.0
+    if var_idx == 0:
+        result = v0
+    elif var_idx == 1:
+        result = v1
+    elif var_idx == 2:
+        result = v2
+    elif var_idx == 3:
+        result = v3
+    elif var_idx == 4:
+        result = v4
+    elif var_idx == 5:
+        result = v5
+    elif var_idx == 6:
+        result = v6
+    elif var_idx == 7:
+        result = v7
+    elif var_idx == 8:
+        result = v8
+    return result
+
+
+@ti.func
 def vm_execute(bytecode: ti.types.ndarray(),
                constants: ti.types.ndarray(),
-               vars: ti.types.ndarray(),
+               var_dist: ti.f32, var_density: ti.f32,
+               var_speed: ti.f32, var_angle: ti.f32,
+               var_state0: ti.f32, var_state1: ti.f32,
+               var_state2: ti.f32, var_state3: ti.f32,
+               var_n_count: ti.f32,
                stack_depth: ti.i32) -> ti.f32:
     """
     Execute bytecode in a stack-based VM on GPU.
 
-    Args:
-        bytecode: int array of opcodes + operands
-        constants: float array of constant values
-        vars: float array of variable values (dist, density, etc.)
-        stack_depth: max stack depth (for bounds checking)
+    Variables are passed as individual floats to avoid ti.Vector
+    dynamic indexing issues on GPU.
 
     Returns:
         Final value on top of stack
@@ -90,7 +121,12 @@ def vm_execute(bytecode: ti.types.ndarray(),
             idx = bytecode[pc + 1]
             sp += 1
             if sp < stack_depth:
-                stack[sp] = vars[idx]
+                stack[sp] = _get_var(
+                    idx,
+                    var_dist, var_density, var_speed, var_angle,
+                    var_state0, var_state1, var_state2, var_state3,
+                    var_n_count
+                )
             pc += 2
 
         elif op == OP_ADD:
@@ -108,6 +144,18 @@ def vm_execute(bytecode: ti.types.ndarray(),
         elif op == OP_MUL:
             if sp >= 2:
                 stack[sp - 1] = stack[sp - 1] * stack[sp]
+                sp -= 1
+            pc += 1
+
+        elif op == OP_DIV:
+            if sp >= 2:
+                denom = stack[sp]
+                # Safe division: clamp denominator away from zero
+                if denom > 0:
+                    denom = ti.math.max(denom, 1e-7)
+                else:
+                    denom = ti.math.min(denom, -1e-7)
+                stack[sp - 1] = stack[sp - 1] / denom
                 sp -= 1
             pc += 1
 

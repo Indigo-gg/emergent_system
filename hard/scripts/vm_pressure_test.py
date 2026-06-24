@@ -38,8 +38,9 @@ def test_vm_basic():
 
     @ti.kernel
     def run_vm(bc: ti.types.ndarray(), consts: ti.types.ndarray()) -> ti.f32:
-        vars = ti.Vector([1.0, 0.5, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        return vm_execute(bc, consts, vars, 16)
+        return vm_execute(bc, consts,
+                         1.0, 0.5, 0.1, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 16)
 
     result = run_vm(bytecode, constants)
     print(f"VM basic test: sin(1.0 * 2.0) = {result:.6f} (expected: {np.sin(2.0):.6f})")
@@ -77,15 +78,9 @@ def test_vm_pressure(n_particles: int = 1_000_000, n_steps: int = 100):
     def vm_step(bc: ti.types.ndarray(), consts: ti.types.ndarray()):
         """Simulate one step: each particle runs VM once."""
         for i in range(n_particles):
-            vars = ti.Vector([
-                1.0,    # dist
-                0.5,    # density
-                0.1,    # speed
-                0.0,    # angle
-                0.0, 0.0, 0.0, 0.0,  # state
-                0.0     # neighbor_count
-            ])
-            result = vm_execute(bc, consts, vars, 16)
+            result = vm_execute(bc, consts,
+                                1.0, 0.5, 0.1, 0.0,
+                                0.0, 0.0, 0.0, 0.0, 0.0, 16)
             force_x[i] = result
             force_y[i] = result
 
@@ -150,8 +145,9 @@ def test_hardcoded_vs_vm(n_particles: int = 100_000, n_steps: int = 100):
     @ti.kernel
     def vm_step(bc: ti.types.ndarray(), consts: ti.types.ndarray()):
         for i in range(n_particles):
-            vars = ti.Vector([1.0, 0.5, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-            result = vm_execute(bc, consts, vars, 16)
+            result = vm_execute(bc, consts,
+                                1.0, 0.5, 0.1, 0.0,
+                                0.0, 0.0, 0.0, 0.0, 0.0, 16)
             force_x[i] = result
             force_y[i] = result
 

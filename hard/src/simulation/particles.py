@@ -38,15 +38,51 @@ class ParticleSystem:
 
     @ti.kernel
     def initialize(self, seed: ti.i32):
-        """Randomly initialize all particles."""
-        rng = ti.random()
+        """Randomly initialize all particles using seeded PRNG.
+
+        Uses mulberry32 hash-based PRNG for reproducibility across runs.
+        ti.random() cannot be seeded, so we implement our own.
+        """
+        C1 = ti.u32(1664525)
+        C2 = ti.u32(1013904223)
+        C3 = ti.u32(2654435769)
+        MAX_U32 = ti.f32(4294967296.0)
+
         for i in range(self.n):
-            self.pos_x[i] = ti.random() * self.world_w
-            self.pos_y[i] = ti.random() * self.world_h
-            self.vel_x[i] = (ti.random() - 0.5) * 0.1
-            self.vel_y[i] = (ti.random() - 0.5) * 0.1
+            # Seeded PRNG: mulberry32 hash
+            state = ti.u32(seed) * C1 + ti.u32(i) * C2 + ti.u32(12345)
+            state = state ^ (state >> 16)
+            state = state * C3
+            state = state ^ (state >> 16)
+            state = state * C3
+            state = state ^ (state >> 16)
+            r1 = ti.cast(state, ti.f32) / MAX_U32
+
+            state2 = state * C1 + C2
+            state2 = state2 ^ (state2 >> 16)
+            state2 = state2 * C3
+            r2 = ti.cast(state2, ti.f32) / MAX_U32
+
+            state3 = state2 * C1 + C2
+            state3 = state3 ^ (state3 >> 16)
+            state3 = state3 * C3
+            r3 = ti.cast(state3, ti.f32) / MAX_U32
+
+            state4 = state3 * C1 + C2
+            state4 = state4 ^ (state4 >> 16)
+            state4 = state4 * C3
+            r4 = ti.cast(state4, ti.f32) / MAX_U32
+
+            self.pos_x[i] = r1 * self.world_w
+            self.pos_y[i] = r2 * self.world_h
+            self.vel_x[i] = (r3 - 0.5) * 0.1
+            self.vel_y[i] = (r4 - 0.5) * 0.1
             for d in range(self.state_dim):
-                self.state[i, d] = (ti.random() - 0.5) * 0.1
+                state_d = state4 * (ti.u32(d) + ti.u32(1)) * C1 + C2
+                state_d = state_d ^ (state_d >> 16)
+                state_d = state_d * C3
+                r_d = ti.cast(state_d, ti.f32) / MAX_U32
+                self.state[i, d] = (r_d - 0.5) * 0.1
             self.force_x[i] = 0.0
             self.force_y[i] = 0.0
             self.alive[i] = 1

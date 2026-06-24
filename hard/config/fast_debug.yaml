@@ -1,12 +1,15 @@
+# Fast Debug Profile — quick iteration, small scale
+# Usage: python -m src.main --mode evolution --config config/fast_debug.yaml
+
 experiment:
-  name: "hard-mode-v1"
+  name: "debug-fast"
   seed: 42
 
 simulation:
-  num_particles: 500000
+  num_particles: 5000
   particle_state_dim: 4
   dt: 0.01
-  steps_per_eval: 50000
+  steps_per_eval: 1000
   boundary: "periodic"
   damping_gamma: 0.1
   bucket_max: 128
@@ -20,13 +23,13 @@ gep:
   terminal_set: ["dist", "density", "speed", "angle", "state_0", "state_1", "state_2", "state_3", "neighbor_count"]
   function_set: ["+", "-", "*", "sin", "cos", "tanh", "sqrt", "abs", "max", "min"]
   constant_range: [-5.0, 5.0]
-  max_tree_depth: 12
-  head_length: 8
-  bytecode_length: 128
+  max_tree_depth: 8
+  head_length: 6
+  bytecode_length: 64
   vm_stack_depth: 16
 
 evolution:
-  population_size: 10
+  population_size: 5
   mutation_rates:
     point_mutation: 0.30
     constant_finetune: 0.20
@@ -38,24 +41,24 @@ evolution:
 
 map_elites:
   grid_features: ["entropy", "islands", "fft_freq"]
-  resolution_per_dim: 15
+  resolution_per_dim: 5       # 5³ = 125 cells (fast)
   all_features: ["entropy", "islands", "fft_freq", "angular_skew", "density_lap_var", "survival_decay"]
 
 novelty:
   behavior_vector_dim: 12
-  k_neighbors: 15
+  k_neighbors: 5
   threshold_adaptive: true
-  stale_generations: 10
-  sample_interval: 500
+  stale_generations: 5
+  sample_interval: 100
   grid_selection_prob: 0.7
   min_survival_rate: 0.1
   min_speed_variance: 0.001
   max_entropy_ratio: 0.95
 
 rendering:
-  resolution: [256, 256]
-  trajectory_frames: 500
-  gif_frames: 200
+  resolution: [128, 128]
+  trajectory_frames: 100
+  gif_frames: 50
   gif_fps: 10
 
 safety:
@@ -67,18 +70,18 @@ safety:
   max_displacement_ratio: 0.5
 
 vlm:
-  provider: "ollama"                  # local | ollama
-  model: "qwen2.5vl:3b"              # Ollama model (Qwen2.5-VL 3B, ~3.2GB)
-  fallback_model: "llava:7b"          # Ollama fallback
-  base_url: "http://localhost:11434"  # Ollama endpoint (ollama provider only)
-  daily_limit: 100
+  provider: "ollama"
+  model: "qwen2.5vl:3b"
+  base_url: "http://localhost:11434"
+  daily_limit: 50
+  max_per_generation: 3      # max VLM calls per generation (token budget control)
 
 checkpoint:
-  interval: 1000
-  max_keep: 5
+  interval: 50
+  max_keep: 3
 
 monitoring:
   gpu_temp_threshold: 85
-  disk_min_gb: 5
-  stale_generations: 10
-  formula_max_depth: 20
+  disk_min_gb: 2
+  stale_generations: 5
+  formula_max_depth: 15

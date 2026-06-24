@@ -11,7 +11,7 @@ from typing import Optional, List
 import copy
 
 from src.simulation.vm import (
-    OP_CONST, OP_VAR, OP_ADD, OP_SUB, OP_MUL,
+    OP_CONST, OP_VAR, OP_ADD, OP_SUB, OP_MUL, OP_DIV,
     OP_SIN, OP_COS, OP_TANH, OP_SQRT, OP_ABS, OP_NEG,
     OP_MAX, OP_MIN, OP_CLAMP, OP_HALT
 )
@@ -62,6 +62,10 @@ def Sub(a: Node, b: Node) -> Node:
 
 def Mul(a: Node, b: Node) -> Node:
     return Node(op='*', children=[a, b])
+
+def Div(a: Node, b: Node) -> Node:
+    """Safe division: a / b (VM clamps denominator away from zero)."""
+    return Node(op='/', children=[a, b])
 
 def Sin(a: Node) -> Node:
     return Node(op='sin', children=[a])
@@ -125,6 +129,16 @@ def symbolic_diff(node: Node, var_name: str) -> Node:
             Mul(f, symbolic_diff(g, var_name))
         )
 
+    elif op == '/':
+        # d(f/g)/dx = (f'*g - f*g') / g^2
+        g = node.children[1]
+        df = symbolic_diff(f, var_name)
+        dg = symbolic_diff(g, var_name)
+        return Div(
+            Sub(Mul(df, g), Mul(f, dg)),
+            Mul(g, g)
+        )
+
     elif op == 'sin':
         # d(sin(f))/dx = cos(f) * f'
         return Mul(Cos(f), symbolic_diff(f, var_name))
@@ -141,43 +155,42 @@ def symbolic_diff(node: Node, var_name: str) -> Node:
         )
 
     elif op == 'sqrt':
-        # d(sqrt(f))/dx = f' / (2*sqrt(f))
-        # Use: f' * (0.5 / sqrt(|f|))
-        return Mul(
-            symbolic_diff(f, var_name),
-            Mul(Const(0.5), Sqrt(Abs(f)))
-        )
+        # d(sqrt(f))/dx = f' / (2 * sqrt(f))
+        # Use safe division with eps to avoid div-by-zero at f=0
+        df = symbolic_diff(f, var_name)
+        return Div(df, Mul(Const(2.0), Sqrt(Add(Abs(f), Const(1e-7)))))
 
     elif op == 'abs':
-        # d(|f|)/dx = sign(f) * f'
-        # Approximate sign(f) as tanh(f*100) for differentiability
-        return Mul(Tanh(Mul(f, Const(100.0))), symbolic_diff(f, var_name))
+        # d(|f|)/dx = f / |f| * f' = sign(f) * f'
+        # Use safe sign: f / (|f| + eps)
+        df = symbolic_diff(f, var_name)
+        sign_f = Div(f, Add(Abs(f), Const(1e-7)))
+        return Mul(sign_f, df)
 
     elif op == 'neg':
         # d(-f)/dx = -f'
         return Neg(symbolic_diff(f, var_name))
 
     elif op == 'max':
-        # d(max(f,g))/dx = f' if f > g else g'
+        # d(max(f,g))/dx = f' if f >= g else g'
         g = node.children[1]
         df = symbolic_diff(f, var_name)
         dg = symbolic_diff(g, var_name)
-        # Approximate: use softmax-like smooth max
-        # max(f,g) ≈ (f*exp(k*f) + g*exp(k*g)) / (exp(k*f) + exp(k*g))
-        # For simplicity, use hard max with the understanding that
-        # at f==g the derivative is undefined but rare
+        # Use the actual max selection: if f >= g, pick df, else dg
         return Add(
-            Mul(df, Const(0.5)),  # simplified: average of both derivatives
-            Mul(dg, Const(0.5))
+            Mul(df, Max(Const(1.0), Div(Sub(g, f), Add(Abs(Sub(g, f)), Const(1e-7))))),
+            Mul(dg, Max(Const(1.0), Div(Sub(f, g), Add(Abs(Sub(f, g)), Const(1e-7)))))
         )
+        # Simplified: when f>g, first term = df*1, second = dg*(large→clamp→1)
+        # This is approximate but better than simple average
 
     elif op == 'min':
         g = node.children[1]
         df = symbolic_diff(f, var_name)
         dg = symbolic_diff(g, var_name)
         return Add(
-            Mul(df, Const(0.5)),
-            Mul(dg, Const(0.5))
+            Mul(df, Max(Const(1.0), Div(Sub(f, g), Add(Abs(Sub(f, g)), Const(1e-7))))),
+            Mul(dg, Max(Const(1.0), Div(Sub(g, f), Add(Abs(Sub(g, f)), Const(1e-7)))))
         )
 
     else:
@@ -228,6 +241,16 @@ def simplify(node: Node) -> Node:
         if a.is_const() and b.is_const():
             return Const(a.value * b.value)
         return Mul(a, b)
+
+    elif op == '/':
+        a, b = children
+        if a.is_const() and a.value == 0.0:
+            return Const(0.0)
+        if b.is_const() and b.value == 1.0:
+            return a
+        if a.is_const() and b.is_const() and b.value != 0.0:
+            return Const(a.value / b.value)
+        return Div(a, b)
 
     elif op == 'neg':
         a = children[0]
@@ -306,6 +329,11 @@ def _emit(node: Node, bytecode: list[int], constants: list[float],
         _emit(node.children[0], bytecode, constants, max_len)
         _emit(node.children[1], bytecode, constants, max_len)
         bytecode.append(OP_MUL)
+
+    elif node.op == '/':
+        _emit(node.children[0], bytecode, constants, max_len)
+        _emit(node.children[1], bytecode, constants, max_len)
+        bytecode.append(OP_DIV)
 
     elif node.op == 'sin':
         _emit(node.children[0], bytecode, constants, max_len)

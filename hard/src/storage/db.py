@@ -4,6 +4,7 @@ SQLite storage layer with WAL mode and single-writer pattern.
 
 import sqlite3
 import os
+import json
 from datetime import datetime
 
 
@@ -83,6 +84,50 @@ class ExperimentDB:
                 vlm_calls, grid_filled, archive_size, elapsed_seconds)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (gen, best_fit, avg_fit, novel, dead, vlm, grid, archive, elapsed)
+        )
+        self.conn.commit()
+
+    def get_evolution_log(self) -> list:
+        """Retrieve all evolution log entries ordered by generation."""
+        cursor = self.conn.execute(
+            """SELECT generation, best_fitness, avg_fitness, novel_count,
+                      dead_count, vlm_calls, grid_filled, archive_size,
+                      elapsed_seconds
+               FROM evolution_log ORDER BY generation"""
+        )
+        return cursor.fetchall()
+
+    def insert_grid_cell(self, key: str, gen: int, fitness: float,
+                         features_3d: tuple, features_12d: list,
+                         formula: str, seed: int):
+        """Insert or replace a MAP-Elites grid cell."""
+        self.conn.execute(
+            """INSERT OR REPLACE INTO grid_cells
+               (grid_key, generation, fitness, f_entropy_mean,
+                f_islands_mean, f_fft_amp_1, features_12d,
+                potential_formula, random_seed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (key, gen, fitness,
+             features_3d[0] if len(features_3d) > 0 else 0,
+             features_3d[1] if len(features_3d) > 1 else 0,
+             features_3d[2] if len(features_3d) > 2 else 0,
+             json.dumps(features_12d) if features_12d else None,
+             formula, seed)
+        )
+        self.conn.commit()
+
+    def insert_novelty_entry(self, gen: int, fitness: float,
+                             novelty_score: float, features_12d: list,
+                             formula: str, seed: int):
+        """Insert a novelty archive entry."""
+        self.conn.execute(
+            """INSERT INTO novelty_archive
+               (generation, fitness, novelty_score, features_12d,
+                potential_formula, random_seed)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (gen, fitness, novelty_score,
+             json.dumps(features_12d) if features_12d else None,
+             formula, seed)
         )
         self.conn.commit()
 

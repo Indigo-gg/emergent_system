@@ -1,5 +1,8 @@
+# Full Scale Profile — production settings, maximum exploration
+# Usage: python -m src.main --mode evolution --config config/full_scale.yaml
+
 experiment:
-  name: "hard-mode-v1"
+  name: "full-scale"
   seed: 42
 
 simulation:
@@ -38,7 +41,7 @@ evolution:
 
 map_elites:
   grid_features: ["entropy", "islands", "fft_freq"]
-  resolution_per_dim: 15
+  resolution_per_dim: 15      # 15³ = 3375 cells
   all_features: ["entropy", "islands", "fft_freq", "angular_skew", "density_lap_var", "survival_decay"]
 
 novelty:
@@ -67,11 +70,11 @@ safety:
   max_displacement_ratio: 0.5
 
 vlm:
-  provider: "ollama"                  # local | ollama
-  model: "qwen2.5vl:3b"              # Ollama model (Qwen2.5-VL 3B, ~3.2GB)
-  fallback_model: "llava:7b"          # Ollama fallback
-  base_url: "http://localhost:11434"  # Ollama endpoint (ollama provider only)
+  provider: "ollama"
+  model: "qwen2.5vl:3b"
+  base_url: "http://localhost:11434"
   daily_limit: 100
+  max_per_generation: 3      # max VLM calls per generation (token budget control)
 
 checkpoint:
   interval: 1000

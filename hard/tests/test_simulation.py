@@ -26,9 +26,16 @@ def test_vm_bytecode_compilation():
     assert len(dudr_bc) == 128
     assert len(constants) > 0
 
-    # Check it ends with CLAMP + HALT
-    assert dudr_bc[-2] == OP_CLAMP
-    assert dudr_bc[-1] == OP_HALT
+    # Find the CLAMP + HALT (before padding)
+    # The bytecode is: [instructions..., CLAMP, HALT, HALT, HALT, ...]
+    clamp_idx = None
+    for i, op in enumerate(dudr_bc):
+        if op == OP_CLAMP:
+            clamp_idx = i
+            break
+    assert clamp_idx is not None, "CLAMP not found in bytecode"
+    assert dudr_bc[clamp_idx] == OP_CLAMP
+    assert dudr_bc[clamp_idx + 1] == OP_HALT
 
     print("PASS: test_vm_bytecode_compilation")
 
@@ -55,10 +62,10 @@ def test_symbolic_differentiation():
     # Should be: 1*x + x*1 = 2*x
     assert deriv.op == '+'
 
-    # d/dx(sin(x)) = cos(x)
+    # d/dx(sin(x)) = cos(x) * 1 = cos(x) (after simplification)
     tree = Sin(Var('dist', 0))
     deriv = simplify(symbolic_diff(tree, 'dist'))
-    assert deriv.op == '*'
+    assert deriv.op == 'cos'
 
     print("PASS: test_symbolic_differentiation")
 

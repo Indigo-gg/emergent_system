@@ -58,15 +58,15 @@ class SimulationStep:
 
     @ti.kernel
     def compute_forces(self,
-                       pos_x: ti.types.ndarray(), pos_y: ti.types.ndarray(),
-                       vel_x: ti.types.ndarray(), vel_y: ti.types.ndarray(),
-                       state: ti.types.ndarray(),
-                       force_x: ti.types.ndarray(), force_y: ti.types.ndarray(),
-                       alive: ti.types.ndarray(),
+                       pos_x: ti.template(), pos_y: ti.template(),
+                       vel_x: ti.template(), vel_y: ti.template(),
+                       state: ti.template(),
+                       force_x: ti.template(), force_y: ti.template(),
+                       alive: ti.template(),
                        bytecode: ti.types.ndarray(),
                        constants: ti.types.ndarray()):
         """Compute forces on all particles using VM-executed bytecode."""
-        for i in range(pos_x.shape[0]):
+        for i in range(self.n):
             if alive[i] == 0:
                 continue
 
@@ -108,17 +108,15 @@ class SimulationStep:
                             angle = ti.atan2(dy, dx)
 
                             # Build variables for VM
-                            # vars = [dist, density, speed, angle, s0, s1, s2, s3, n_count]
                             speed_i = ti.sqrt(vel_x[i] * vel_x[i] + vel_y[i] * vel_y[i])
 
-                            # Execute VM to get dU/dr
-                            # We pass vars as individual values since we can't create
-                            # a dynamic array inside a kernel easily
-                            dudr = self._vm_force_single(
+                            # Execute VM to get dU/dr (inline vm_execute call)
+                            dudr = vm_execute(
+                                bytecode, constants,
                                 dist, 0.0, speed_i, angle,
                                 state[i, 0], state[i, 1], state[i, 2], state[i, 3],
                                 float(neighbor_count),
-                                bytecode, constants
+                                self.vm_stack_depth
                             )
 
                             # Force direction: pointing from i toward j (attractive if negative)
@@ -137,20 +135,14 @@ class SimulationStep:
             force_x[i] = fx_sum
             force_y[i] = fy_sum
 
-    @ti.func
-    def _vm_force_single(self, dist, density, speed, angle,
-                         s0, s1, s2, s3, n_count,
-                         bytecode, constants) -> ti.f32:
-        """Execute VM for a single particle pair to get dU/dr value."""
-        vars = ti.Vector([dist, density, speed, angle, s0, s1, s2, s3, n_count])
-        return vm_execute(bytecode, constants, vars, self.vm_stack_depth)
-
     def step(self, particles):
         """Execute one full simulation step."""
-        # 1. Build spatial hash
-        self.spatial_hash.build(particles.pos_x, particles.pos_y)
+        # 1. Build spatial hash (needs numpy arrays)
+        pos_x_np = particles.pos_x.to_numpy()
+        pos_y_np = particles.pos_y.to_numpy()
+        self.spatial_hash.build(pos_x_np, pos_y_np)
 
-        # 2. Compute forces via VM
+        # 2. Compute forces via VM (operates on Taichi fields directly)
         self.compute_forces(
             particles.pos_x, particles.pos_y,
             particles.vel_x, particles.vel_y,
@@ -160,10 +152,24 @@ class SimulationStep:
             self.bytecode_np, self.constants_np
         )
 
-        # 3. Integrate
+        # 3. Integrate (needs numpy arrays; convert, run, write back)
+        pos_x_np = particles.pos_x.to_numpy()
+        pos_y_np = particles.pos_y.to_numpy()
+        vel_x_np = particles.vel_x.to_numpy()
+        vel_y_np = particles.vel_y.to_numpy()
+        force_x_np = particles.force_x.to_numpy()
+        force_y_np = particles.force_y.to_numpy()
+        alive_np = particles.alive.to_numpy()
+
         self.integrator.step(
-            particles.pos_x, particles.pos_y,
-            particles.vel_x, particles.vel_y,
-            particles.force_x, particles.force_y,
-            particles.alive
+            pos_x_np, pos_y_np,
+            vel_x_np, vel_y_np,
+            force_x_np, force_y_np,
+            alive_np
         )
+
+        # Write back modified arrays to Taichi fields
+        particles.pos_x.from_numpy(pos_x_np)
+        particles.pos_y.from_numpy(pos_y_np)
+        particles.vel_x.from_numpy(vel_x_np)
+        particles.vel_y.from_numpy(vel_y_np)
