@@ -1,0 +1,27 @@
+{
+  "runId": "0003",
+  "timestamp": "2026-06-24T01:47:56.926Z",
+  "round": 3,
+  "params": {
+    "trailDiffuseRate": 0.5,
+    "trailDecayRate": 0.9550000000000001,
+    "nutrientDiffuseRate": 0.16,
+    "nutrientDecayRate": 0.992,
+    "nutrientInjectInterval": 30,
+    "nutrientPatchCount": 4,
+    "nutrientPatchAmount": 5,
+    "wasteProductionRate": 0.28,
+    "wasteDecayRate": 0.992,
+    "wasteMetabolismFactor": 1.25,
+    "wasteRepelStrength": 1.5,
+    "nutrientDriftSpeed": 0.004,
+    "terrainScale": 0.08,
+    "terrainWallThreshold": 0.7250000000000001,
+    "initialPerSpecies": 120
+  },
+  "derived": {
+    "canvasW": 900,
+    "canvasH": 900,
+    "seed": 42
+  }
+}

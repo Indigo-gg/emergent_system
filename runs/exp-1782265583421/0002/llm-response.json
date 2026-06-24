@@ -1,0 +1,41 @@
+{
+  "runId": "0002",
+  "timestamp": "2026-06-24T01:47:56.924Z",
+  "model": "mimo-v2.5",
+  "prompt_version": "v3",
+  "parsed": {
+    "scores": {
+      "species_coexistence": 3,
+      "spatial_organization": 6,
+      "nutrient_network": 7,
+      "structural_stability": 5,
+      "dynamic_complexity": 5,
+      "aesthetic_emergence": 5
+    },
+    "composite_score": 5.1,
+    "emergence_level": "moderate",
+    "description": "物种严重失衡但空间结构清晰的共存系统，Explorer濒临灭绝，Grazer与Harvester形成稳定的丝状网络。",
+    "observations": [
+      "Explorer个体能量极低（0.32），处于功能性灭绝边缘，其稀疏的橙金色轨迹几乎被掩盖。",
+      "Grazer与Harvester形成了明确的空间分异和丝状网络，但整体结构较为单一。",
+      "营养网络清晰可见，且明显追踪着漂移的营养热点，显示出适应性。"
+    ],
+    "species_assessment": {
+      "explorer": "极度濒危。仅存12个活跃个体，能量极低，在系统中作用几乎可以忽略。",
+      "grazer": "主导物种之一，占51.9%，平均能量37.64，表现稳健，成功占据了大量空间。",
+      "harvester": "另一主导物种，占44.6%，表现均衡，与Grazer形成了稳定的空间共存格局。"
+    },
+    "temporal_assessment": "主要丝状结构在时序切片中持续存在，但位置随营养漂移而缓慢迁移。",
+    "is_false_positive": false,
+    "false_positive_reason": null,
+    "is_novel": false,
+    "novelty_note": null,
+    "suggestion": {
+      "direction": "提高Explorer竞争力以恢复三物种均衡，可能需调整其代谢消耗或信息素响应。",
+      "param_hints": {
+        "wasteMetabolismFactor": "减小（可能对Explorer的高代谢消耗惩罚过重）",
+        "initialPerSpecies": "保持或略微增大Explorer初始值"
+      }
+    }
+  }
+}

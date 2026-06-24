@@ -1,0 +1,14 @@
+{
+  "experimentName": "exp-1782265583422",
+  "startedAt": "2026-06-24T01:46:23.422Z",
+  "lastRunId": 3,
+  "strategy": "random",
+  "bestScore": 7.6,
+  "bestRunId": 3,
+  "budget": {
+    "maxRuns": 250,
+    "maxLLMCalls": 100,
+    "runsUsed": 3,
+    "llmCallsUsed": 3
+  }
+}
