@@ -1,0 +1,83 @@
+experiment:
+  name: "hard-mode-v1"
+  seed: 42
+
+simulation:
+  num_particles: 500000
+  particle_state_dim: 4
+  dt: 0.01
+  steps_per_eval: 50000
+  boundary: "periodic"
+  damping_gamma: 0.1
+  bucket_max: 128
+
+world:
+  width: 100.0
+  height: 100.0
+  cell_size: 2.0
+
+gep:
+  terminal_set: ["dist", "density", "speed", "angle", "state_0", "state_1", "state_2", "state_3", "neighbor_count"]
+  function_set: ["+", "-", "*", "sin", "cos", "tanh", "sqrt", "abs", "max", "min"]
+  constant_range: [-5.0, 5.0]
+  max_tree_depth: 12
+  head_length: 8
+  bytecode_length: 128
+  vm_stack_depth: 16
+
+evolution:
+  population_size: 10
+  mutation_rates:
+    point_mutation: 0.30
+    constant_finetune: 0.20
+    is_transposition: 0.15
+    ris_transposition: 0.10
+    one_point_recombination: 0.15
+    two_point_recombination: 0.10
+  parsimony_pressure: 0.001
+
+map_elites:
+  grid_features: ["entropy", "islands", "fft_freq"]
+  resolution_per_dim: 15
+  all_features: ["entropy", "islands", "fft_freq", "angular_skew", "density_lap_var", "survival_decay"]
+
+novelty:
+  behavior_vector_dim: 12
+  k_neighbors: 15
+  threshold_adaptive: true
+  stale_generations: 10
+  sample_interval: 500
+  grid_selection_prob: 0.7
+  min_survival_rate: 0.1
+  min_speed_variance: 0.001
+  max_entropy_ratio: 0.95
+
+rendering:
+  resolution: [256, 256]
+  trajectory_frames: 500
+  gif_frames: 200
+  gif_fps: 10
+
+safety:
+  clamp_min: -100.0
+  clamp_max: 100.0
+  nan_penalty: 0.0
+  max_force: 10.0
+  max_speed: 5.0
+  max_displacement_ratio: 0.5
+
+vlm:
+  provider: "ollama"
+  model: "llava:7b"
+  base_url: "http://localhost:11434"
+  daily_limit: 100
+
+checkpoint:
+  interval: 1000
+  max_keep: 5
+
+monitoring:
+  gpu_temp_threshold: 85
+  disk_min_gb: 5
+  stale_generations: 10
+  formula_max_depth: 20
