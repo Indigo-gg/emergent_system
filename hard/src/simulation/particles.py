@@ -1,7 +1,7 @@
 """
 Particle state management using Taichi fields.
 
-State per particle: [x, y, vx, vy, state_0..state_3, force_x, force_y]
+State per particle: [x, y, vx, vy, state_0..state_3, energy, force_x, force_y, alive, dormant_ticks]
 All stored as separate Taichi fields (SoA layout for GPU coalescing).
 """
 
@@ -28,6 +28,12 @@ class ParticleSystem:
 
         # Internal state (configurable dimensions)
         self.state = ti.field(dtype=ti.f32, shape=(self.n, self.state_dim))
+
+        # Energy (v6: particle energy for metabolism/dormancy)
+        self.energy = ti.field(dtype=ti.f32, shape=self.n)
+
+        # Dormant ticks (v6: how long particle has been dormant, 0 = active)
+        self.dormant_ticks = ti.field(dtype=ti.i32, shape=self.n)
 
         # Force accumulators
         self.force_x = ti.field(dtype=ti.f32, shape=self.n)
@@ -86,6 +92,8 @@ class ParticleSystem:
             self.force_x[i] = 0.0
             self.force_y[i] = 0.0
             self.alive[i] = 1
+            self.energy[i] = 1.0
+            self.dormant_ticks[i] = 0
 
     @ti.kernel
     def reset_forces(self):

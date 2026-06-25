@@ -145,19 +145,39 @@ def test_evolution_loop_basic():
             'max_force': 10.0,
             'max_displacement_ratio': 0.5,
         },
+        'environment': {
+            'nutrient_diffuse_rate': 0.08,
+            'nutrient_decay_rate': 0.001,
+            'nutrient_inject_interval': 60,
+            'nutrient_patch_count': 3,
+            'nutrient_patch_amount': 1.5,
+            'nutrient_drift_speed': 0.002,
+            'waste_production_rate': 0.15,
+            'waste_diffuse_rate': 0.05,
+            'waste_decay_rate': 0.005,
+            'waste_metabolism_factor': 2.0,
+            'base_metabolism': 0.01,
+            'move_cost': 0.005,
+            'absorb_rate': 0.5,
+            'dormant_metabolism': 0.001,
+            'max_dormant_ticks': 600,
+        },
     }
 
     # Setup simulation components
+    from src.simulation.environment import EnvironmentLayer
     particles = ParticleSystem(cfg)
     spatial_hash = SpatialHash(cfg)
     integrator = Integrator(cfg)
     sim_step = SimulationStep(spatial_hash, integrator, cfg)
+    environment = EnvironmentLayer(cfg)
 
     sim_components = {
         'particles': particles,
         'spatial_hash': spatial_hash,
         'integrator': integrator,
         'step': sim_step,
+        'environment': environment,
     }
 
     rng = random.Random(42)
@@ -168,7 +188,7 @@ def test_evolution_loop_basic():
         parent = random_genome(cfg, rng)
         child = mutate(parent, cfg, rng)
 
-        fitness, _, _ = evaluate_fitness(child, sim_components, cfg)
+        fitness, _, _ = evaluate_fitness(child, sim_components, cfg, environment=environment)
         assert fitness >= 0.0, f"Negative fitness: {fitness}"
         best_fitness = max(best_fitness, fitness)
         print(f"  gen={gen} fitness={fitness:.4f} formula={child.to_formula()[:50]}")

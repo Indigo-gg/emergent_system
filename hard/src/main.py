@@ -70,6 +70,7 @@ def run_phase1(cfg: dict, logger: logging.Logger):
     from src.simulation.spatial_hash import SpatialHash
     from src.simulation.integrator import Integrator
     from src.simulation.step import SimulationStep
+    from src.simulation.environment import EnvironmentLayer
     from src.storage.db import ExperimentDB
 
     n = cfg['simulation']['num_particles']
@@ -83,10 +84,12 @@ def run_phase1(cfg: dict, logger: logging.Logger):
     spatial_hash = SpatialHash(cfg)
     integrator = Integrator(cfg)
     sim_step = SimulationStep(spatial_hash, integrator, cfg)
+    environment = EnvironmentLayer(cfg)
 
-    # Initialize particles
+    # Initialize particles and environment
     particles.initialize(seed)
-    logger.info("Particles initialized")
+    environment.initialize(seed)
+    logger.info("Particles + environment initialized")
 
     # Database
     db_path = os.path.join('data', 'experiments', cfg['experiment']['name'],
@@ -98,7 +101,7 @@ def run_phase1(cfg: dict, logger: logging.Logger):
     t_start = time.time()
 
     for step in range(steps):
-        sim_step.step(particles)
+        sim_step.step(particles, environment)
 
         if (step + 1) % 1000 == 0:
             elapsed = time.time() - t_start
@@ -157,6 +160,7 @@ def run_evolution(cfg: dict, logger: logging.Logger, max_generations: int = None
     from src.simulation.spatial_hash import SpatialHash
     from src.simulation.integrator import Integrator
     from src.simulation.step import SimulationStep
+    from src.simulation.environment import EnvironmentLayer
     from src.evolution.genome import random_genome, decode_gene
     from src.evolution.mutation import mutate
     from src.evolution.gep import evaluate_fitness
@@ -177,11 +181,15 @@ def run_evolution(cfg: dict, logger: logging.Logger, max_generations: int = None
     integrator = Integrator(cfg)
     sim_step = SimulationStep(spatial_hash, integrator, cfg)
 
+    # v6: Initialize environment layer
+    environment = EnvironmentLayer(cfg)
+
     sim_components = {
         'particles': particles,
         'spatial_hash': spatial_hash,
         'integrator': integrator,
         'step': sim_step,
+        'environment': environment,
     }
 
     # Initialize Phase 3 components
@@ -268,22 +276,46 @@ def run_evolution(cfg: dict, logger: logging.Logger, max_generations: int = None
         vlm_calls_this_gen = 0  # per-gen VLM cap counter
 
         # Evaluate each genome in population
+        genome_features = {}  # genome_id -> features_15d (for periodic screenshot)
         for i, genome in enumerate(population):
             # Evaluate fitness + extract features in single simulation pass
-            fitness, features_12d, features_3d = evaluate_fitness(
-                genome, sim_components, cfg, feature_extractor=fe
+            fitness, features_15d, features_3d = evaluate_fitness(
+                genome, sim_components, cfg, feature_extractor=fe,
+                environment=environment
             )
 
             if fitness <= 0:
                 dead_count += 1
                 continue
 
+            # Store features for periodic screenshot lookup
+            genome_features[genome.get_id()] = features_15d
+
             # Archive to MAP-Elites
-            me.try_archive(genome, features_3d, fitness, features_12d, genome.random_seed)
+            was_archived = me.try_archive(genome, features_3d, fitness, features_15d, genome.random_seed)
+            if was_archived:
+                # Persist grid cell to DB
+                grid_key = me._discretize(features_3d) if features_3d else (0, 0, 0)
+                formula = genome.to_formula() if hasattr(genome, 'to_formula') else ''
+                db.insert_grid_cell(
+                    key=str(grid_key), gen=gen, fitness=fitness,
+                    features_3d=features_3d or (0.0, 0.0, 0.0),
+                    features_12d=features_15d,
+                    formula=formula, seed=genome.random_seed,
+                )
 
             # Try adding to Novelty Archive
-            was_novel = na.try_add(genome, features_12d, fitness, genome.random_seed)
+            was_novel = na.try_add(genome, features_15d, fitness, genome.random_seed)
             if was_novel:
+                # Persist novelty entry to DB
+                formula = genome.to_formula() if hasattr(genome, 'to_formula') else ''
+                novelty_score_val = na.archive[-1]['novelty_score'] if na.archive else 0.0
+                db.insert_novelty_entry(
+                    gen=gen, fitness=fitness,
+                    novelty_score=novelty_score_val,
+                    features_12d=features_15d,
+                    formula=formula, seed=genome.random_seed,
+                )
                 novel_count += 1
                 generations_without_novelty = 0
 
@@ -291,28 +323,50 @@ def run_evolution(cfg: dict, logger: logging.Logger, max_generations: int = None
                 vlm_worthy = (
                     check_daily_limit(cfg)
                     and vlm_calls_this_gen < vlm_gen_cap
-                    and should_call_vlm(features_12d, judged_features)
+                    and should_call_vlm(features_15d, judged_features, novelty_score=novelty_score_val)
                 )
 
                 if vlm_worthy:
                     try:
                         position_history = []
                         genome.compile(cfg['gep']['bytecode_length'])
+                        genome.compile_chemotaxis(cfg['gep']['bytecode_length'])
                         tree = decode_gene(genome.potential_gene, genome.head_length)
                         sim_step.set_potential(tree)
+                        if genome.chemotaxis_gene:
+                            from src.evolution.genome import decode_chemotaxis_gene
+                            chemo_tree = decode_chemotaxis_gene(genome.chemotaxis_gene, genome.head_length)
+                            sim_step.set_chemotaxis(chemo_tree)
                         particles.initialize(genome.random_seed)
+                        environment.initialize(genome.random_seed)
 
+                        feature_ts = {'speed_variance': [], 'survival_count': [], 'avg_energy': []}
                         for step in range(500):
-                            sim_step.step(particles)
+                            sim_step.step(particles, environment)
                             if (step + 1) % 10 == 0:
                                 px = particles.pos_x.to_numpy()
                                 py = particles.pos_y.to_numpy()
+                                vx = particles.vel_x.to_numpy()
+                                vy = particles.vel_y.to_numpy()
                                 alive = particles.alive.to_numpy()
+                                energy = particles.energy.to_numpy()
                                 position_history.append((px[alive == 1], py[alive == 1]))
 
+                                # Collect feature time series
+                                speeds = np.sqrt(vx[alive == 1]**2 + vy[alive == 1]**2)
+                                feature_ts['speed_variance'].append((step, float(np.var(speeds))))
+                                feature_ts['survival_count'].append((step, int(np.sum(alive))))
+                                feature_ts['avg_energy'].append((step, float(np.mean(energy[alive == 1])) if np.sum(alive) > 0 else 0.0))
+
+                        # Extract environment field snapshots for visualization
+                        nutrient_np = environment.nutrient_field.to_numpy()
+                        waste_np = environment.waste_field.to_numpy()
+
                         package = render_novelty_package(
-                            genome, features_12d, position_history, {},
-                            cfg, screenshot_dir
+                            genome, features_15d, position_history,
+                            feature_ts, cfg, screenshot_dir,
+                            nutrient_field=nutrient_np,
+                            waste_field=waste_np,
                         )
 
                         # Compress image for VLM to reduce token consumption
@@ -327,10 +381,10 @@ def run_evolution(cfg: dict, logger: logging.Logger, max_generations: int = None
                         })
 
                         # Track judged features for future filtering
-                        if features_12d is not None:
-                            judged_features.append(features_12d.tolist()
-                                                    if hasattr(features_12d, 'tolist')
-                                                    else list(features_12d))
+                        if features_15d is not None:
+                            judged_features.append(features_15d.tolist()
+                                                    if hasattr(features_15d, 'tolist')
+                                                    else list(features_15d))
                             # Keep last 200 entries to avoid unbounded growth
                             if len(judged_features) > 200:
                                 judged_features = judged_features[-200:]
@@ -373,13 +427,15 @@ def run_evolution(cfg: dict, logger: logging.Logger, max_generations: int = None
                 spatial_hash = SpatialHash(cfg)
                 integrator = Integrator(cfg)
                 sim_step = SimulationStep(spatial_hash, integrator, cfg)
+                environment = EnvironmentLayer(cfg)
                 sim_components = {
                     'particles': particles,
                     'spatial_hash': spatial_hash,
                     'integrator': integrator,
                     'step': sim_step,
+                    'environment': environment,
                 }
-                logger.info("Simulation components reinitialized after VLM session")
+                logger.info("Simulation + environment components reinitialized after VLM session")
             else:
                 # Ollama: no VRAM conflict, call directly
                 for pkg in novelty_packages:
@@ -397,6 +453,66 @@ def run_evolution(cfg: dict, logger: logging.Logger, max_generations: int = None
         monitor.update_novelty(novel_count > 0)
         if novel_count == 0:
             generations_without_novelty += 1
+
+        # Periodic screenshot saving (every 10 generations for best genome)
+        if (gen + 1) % 10 == 0 and population:
+            try:
+                # Find best genome from this generation
+                best_genome = None
+                best_fitness = -1
+                for g in population:
+                    if hasattr(g, 'fitness') and g.fitness > best_fitness:
+                        best_fitness = g.fitness
+                        best_genome = g
+
+                if best_genome and best_fitness > 0:
+                    # Lookup this genome's features (not from loop variable)
+                    best_features = genome_features.get(best_genome.get_id(), np.zeros(15))
+
+                    # Run simulation to get position history
+                    best_genome.compile(cfg['gep']['bytecode_length'])
+                    best_genome.compile_chemotaxis(cfg['gep']['bytecode_length'])
+                    tree = decode_gene(best_genome.potential_gene, best_genome.head_length)
+                    sim_step.set_potential(tree)
+                    if best_genome.chemotaxis_gene:
+                        from src.evolution.genome import decode_chemotaxis_gene
+                        chemo_tree = decode_chemotaxis_gene(best_genome.chemotaxis_gene, best_genome.head_length)
+                        sim_step.set_chemotaxis(chemo_tree)
+                    particles.initialize(best_genome.random_seed)
+                    environment.initialize(best_genome.random_seed)
+
+                    position_history = []
+                    feature_ts = {'speed_variance': [], 'survival_count': [], 'avg_energy': []}
+                    for step in range(500):
+                        sim_step.step(particles, environment)
+                        if (step + 1) % 10 == 0:
+                            px = particles.pos_x.to_numpy()
+                            py = particles.pos_y.to_numpy()
+                            vx = particles.vel_x.to_numpy()
+                            vy = particles.vel_y.to_numpy()
+                            alive = particles.alive.to_numpy()
+                            energy = particles.energy.to_numpy()
+                            position_history.append((px[alive == 1], py[alive == 1]))
+
+                            speeds = np.sqrt(vx[alive == 1]**2 + vy[alive == 1]**2)
+                            feature_ts['speed_variance'].append((step, float(np.var(speeds))))
+                            feature_ts['survival_count'].append((step, int(np.sum(alive))))
+                            feature_ts['avg_energy'].append((step, float(np.mean(energy[alive == 1])) if np.sum(alive) > 0 else 0.0))
+
+                    # Extract environment field snapshots for visualization
+                    nutrient_np = environment.nutrient_field.to_numpy()
+                    waste_np = environment.waste_field.to_numpy()
+
+                    # Render and save screenshot
+                    package = render_novelty_package(
+                        best_genome, best_features,
+                        position_history, feature_ts, cfg, screenshot_dir,
+                        nutrient_field=nutrient_np,
+                        waste_field=waste_np,
+                    )
+                    logger.info(f"Periodic screenshot saved: gen={gen}, fitness={best_fitness:.4f}")
+            except Exception as e:
+                logger.warning(f"Periodic screenshot failed: {e}")
 
         # Generate next population
         new_population = []

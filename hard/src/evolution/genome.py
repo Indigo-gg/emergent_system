@@ -21,7 +21,8 @@ from typing import Optional
 
 from src.simulation.potential import (
     Node, Const, Var, Add, Sub, Mul, Sin, Cos, Tanh, Sqrt, Abs, Neg, Max, Min,
-    compile_potential, compile_to_bytecode, VAR_MAP
+    compile_potential, compile_chemotaxis, compile_to_bytecode,
+    VAR_MAP, CHEMOTAXIS_VAR_MAP
 )
 from src.simulation.vm import OP_CLAMP, OP_HALT
 
@@ -34,7 +35,8 @@ FUNCTION_ARITY = {
     'sin': 1, 'cos': 1, 'tanh': 1, 'sqrt': 1, 'abs': 1,
 }
 
-TERMINAL_SET = list(VAR_MAP.keys())  # 9 terminals
+TERMINAL_SET = list(VAR_MAP.keys())  # 11 terminals (dist, density, speed, angle, state_0-3, neighbor_count, avg_nutrient, avg_waste)
+CHEMOTAXIS_TERMINAL_SET = list(CHEMOTAXIS_VAR_MAP.keys())  # 7 terminals (grad_nut_x/y, grad_waste_x/y, nutrient, waste, speed)
 
 # Default constant pool for random generation
 DEFAULT_CONSTANT_RANGE = (-5.0, 5.0)
@@ -64,12 +66,14 @@ def is_terminal(sym: str) -> bool:
 
 @dataclass
 class GEPGenome:
-    """A GEP genome containing genes for potential, state, and sense rules."""
+    """A GEP genome containing genes for potential, chemotaxis, state, sense, and metabolism."""
 
     # Genes (linear symbol sequences)
     potential_gene: list = field(default_factory=list)
+    chemotaxis_gene: list = field(default_factory=list)  # v6: environment gradient force
     state_gene: list = field(default_factory=list)
     sense_gene: list = field(default_factory=list)
+    metabolism_gene: list = field(default_factory=list)  # v6: energy consumption rate
 
     # Configuration
     head_length: int = 8
@@ -83,12 +87,15 @@ class GEPGenome:
     # Evaluation results (filled after simulation)
     fitness: float = 0.0
     features_3d: tuple = (0.0, 0.0, 0.0)
-    features_12d: list = field(default_factory=list)
+    features_15d: list = field(default_factory=list)  # v6: 15D features
 
     # Compiled bytecode cache
     _potential_bytecode: list = field(default_factory=list, repr=False)
     _potential_constants: list = field(default_factory=list, repr=False)
+    _chemotaxis_bytecode: list = field(default_factory=list, repr=False)
+    _chemotaxis_constants: list = field(default_factory=list, repr=False)
     _compiled: bool = field(default=False, repr=False)
+    _chemo_compiled: bool = field(default=False, repr=False)
 
     @property
     def tail_length(self) -> int:
@@ -108,6 +115,20 @@ class GEPGenome:
         tree = decode_gene(self.potential_gene, self.head_length)
         return _tree_to_formula(tree)
 
+    def to_formula_chemotaxis(self) -> str:
+        """Convert chemotaxis gene to human-readable formula string."""
+        if not self.chemotaxis_gene:
+            return "0"
+        tree = decode_chemotaxis_gene(self.chemotaxis_gene, self.head_length)
+        return _tree_to_formula(tree)
+
+    def to_formula_metabolism(self) -> str:
+        """Convert metabolism gene to human-readable formula string."""
+        if not self.metabolism_gene:
+            return "0.01"
+        tree = decode_chemotaxis_gene(self.metabolism_gene, self.head_length)
+        return _tree_to_formula(tree)
+
     def compile(self, max_bytecode_len: int = 128):
         """Compile potential gene to bytecode (cached)."""
         if self._compiled:
@@ -118,11 +139,29 @@ class GEPGenome:
         self._potential_constants = consts if consts else [0.0]
         self._compiled = True
 
+    def compile_chemotaxis(self, max_bytecode_len: int = 128):
+        """Compile chemotaxis gene to bytecode (cached)."""
+        if self._chemo_compiled:
+            return
+        if not self.chemotaxis_gene:
+            self._chemotaxis_bytecode = [0] * max_bytecode_len
+            self._chemotaxis_constants = [0.0]
+            self._chemo_compiled = True
+            return
+        tree = decode_chemotaxis_gene(self.chemotaxis_gene, self.head_length)
+        bc, consts = compile_chemotaxis(tree, max_bytecode_len)
+        self._chemotaxis_bytecode = bc
+        self._chemotaxis_constants = consts if consts else [0.0]
+        self._chemo_compiled = True
+
     def invalidate_cache(self):
         """Invalidate bytecode cache (after mutation)."""
         self._compiled = False
+        self._chemo_compiled = False
         self._potential_bytecode = []
         self._potential_constants = []
+        self._chemotaxis_bytecode = []
+        self._chemotaxis_constants = []
 
 
 # ── Gene Decoding (gene → AST) ──
@@ -141,11 +180,18 @@ def decode_gene(gene: list, head_length: int) -> Node:
     return root
 
 
-def _decode_node(gene: list, pos: int, head_length: int) -> tuple:
+def _decode_node(gene: list, pos: int, head_length: int,
+                 var_map: dict = None) -> tuple:
     """
     Recursively decode a node starting at gene[pos].
     Returns (Node, next_position).
+
+    Args:
+        var_map: variable name → index mapping (VAR_MAP or CHEMOTAXIS_VAR_MAP)
     """
+    if var_map is None:
+        var_map = VAR_MAP
+
     if pos >= len(gene):
         return Const(0.0), pos
 
@@ -157,25 +203,35 @@ def _decode_node(gene: list, pos: int, head_length: int) -> tuple:
         next_pos = pos + 1
         for _ in range(arity):
             if next_pos >= len(gene):
-                # Out of gene — fill with zero constant
                 children.append(Const(0.0))
             else:
-                child, next_pos = _decode_node(gene, next_pos, head_length)
+                child, next_pos = _decode_node(gene, next_pos, head_length, var_map)
                 children.append(child)
 
         node = Node(op=sym, children=children)
         return node, next_pos
     else:
         # Terminal
-        if sym in VAR_MAP:
-            return Var(sym, VAR_MAP[sym]), pos + 1
+        if sym in var_map:
+            return Var(sym, var_map[sym]), pos + 1
         else:
             try:
                 val = float(sym)
                 return Const(val), pos + 1
             except ValueError:
-                # Unknown symbol → treat as constant 0
                 return Const(0.0), pos + 1
+
+
+def decode_chemotaxis_gene(gene: list, head_length: int) -> Node:
+    """
+    Decode a chemotaxis gene using CHEMOTAXIS_VAR_MAP.
+    Terminal set: grad_nut_x, grad_nut_y, grad_waste_x, grad_waste_y,
+                  nutrient, waste, speed
+    """
+    if not gene:
+        return Const(0.0)
+    root, _ = _decode_node(gene, 0, head_length, CHEMOTAXIS_VAR_MAP)
+    return root
 
 
 # ── Gene Encoding (AST → gene) ──
@@ -226,27 +282,34 @@ def random_genome(cfg: dict, rng: random.Random = None) -> GEPGenome:
     gene_length = head_length + tail_length
     constant_range = cfg['gep'].get('constant_range', [-5.0, 5.0])
 
-    # Generate potential gene
-    potential_gene = _random_gene(head_length, tail_length, constant_range, rng)
+    # Generate potential gene (terminal set: VAR_MAP)
+    potential_gene = _random_gene(head_length, tail_length, constant_range, rng,
+                                  terminal_set=TERMINAL_SET)
 
-    # Generate state gene (simpler: just use a default)
-    state_gene = _random_gene(head_length, tail_length, constant_range, rng)
-
-    # Generate sense gene
-    sense_gene = _random_gene(head_length, tail_length, constant_range, rng)
+    # Generate chemotaxis gene (terminal set: CHEMOTAXIS_TERMINAL_SET)
+    chemotaxis_gene = _random_gene(head_length, tail_length, constant_range, rng,
+                                   terminal_set=CHEMOTAXIS_TERMINAL_SET)
 
     return GEPGenome(
         potential_gene=potential_gene,
-        state_gene=state_gene,
-        sense_gene=sense_gene,
+        chemotaxis_gene=chemotaxis_gene,
         head_length=head_length,
         random_seed=rng.randint(0, 2**31),
     )
 
 
 def _random_gene(head_length: int, tail_length: int,
-                 constant_range: tuple, rng: random.Random) -> list:
-    """Generate a random gene string."""
+                 constant_range: tuple, rng: random.Random,
+                 terminal_set: list = None) -> list:
+    """Generate a random gene string.
+
+    Args:
+        terminal_set: list of terminal symbols to choose from.
+                     Defaults to TERMINAL_SET (potential U variables).
+    """
+    if terminal_set is None:
+        terminal_set = TERMINAL_SET
+
     gene = []
 
     # Head: mix of functions and terminals
@@ -257,14 +320,14 @@ def _random_gene(head_length: int, tail_length: int,
             if rng.random() < 0.3:  # 30% of terminals are constants
                 gene.append(random_constant(rng, *constant_range))
             else:
-                gene.append(rng.choice(TERMINAL_SET))
+                gene.append(rng.choice(terminal_set))
 
     # Tail: terminals only
     for _ in range(tail_length):
         if rng.random() < 0.3:
             gene.append(random_constant(rng, *constant_range))
         else:
-            gene.append(rng.choice(TERMINAL_SET))
+            gene.append(rng.choice(terminal_set))
 
     return gene
 

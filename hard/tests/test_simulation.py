@@ -142,20 +142,41 @@ def test_full_step_no_nan():
             'max_force': 10.0,
             'max_displacement_ratio': 0.5,
         },
+        'environment': {
+            'nutrient_diffuse_rate': 0.08,
+            'nutrient_decay_rate': 0.001,
+            'nutrient_inject_interval': 60,
+            'nutrient_patch_count': 3,
+            'nutrient_patch_amount': 1.5,
+            'nutrient_drift_speed': 0.002,
+            'waste_production_rate': 0.15,
+            'waste_diffuse_rate': 0.05,
+            'waste_decay_rate': 0.005,
+            'waste_metabolism_factor': 2.0,
+            'base_metabolism': 0.01,
+            'move_cost': 0.005,
+            'absorb_rate': 0.5,
+            'dormant_metabolism': 0.001,
+            'max_dormant_ticks': 600,
+        },
     }
 
     ti.init(arch=ti.cpu, debug=True)
+
+    from src.simulation.environment import EnvironmentLayer
 
     particles = ParticleSystem(cfg)
     spatial_hash = SpatialHash(cfg)
     integrator = Integrator(cfg)
     sim_step = SimulationStep(spatial_hash, integrator, cfg)
+    environment = EnvironmentLayer(cfg)
 
     particles.initialize(42)
+    environment.initialize(42)
 
     # Run 10 steps
     for _ in range(10):
-        sim_step.step(particles)
+        sim_step.step(particles, environment)
 
     pos_x = particles.pos_x.to_numpy()
     pos_y = particles.pos_y.to_numpy()

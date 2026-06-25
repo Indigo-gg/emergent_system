@@ -14,7 +14,7 @@ import logging
 import numpy as np
 
 from src.evolution.genome import (
-    GEPGenome, random_genome, decode_gene, FUNCTION_ARITY
+    GEPGenome, random_genome, decode_gene, decode_chemotaxis_gene, FUNCTION_ARITY
 )
 from src.simulation.potential import Node, Const, compile_potential
 
@@ -22,26 +22,34 @@ from src.simulation.potential import Node, Const, compile_potential
 logger = logging.getLogger('hard-mode')
 
 
-# ── Fitness Evaluation ──
+def is_constant_tree(tree: Node) -> bool:
+    """Check if an expression tree contains no variable references (is constant)."""
+    if tree.is_var():
+        return False
+    return all(is_constant_tree(child) for child in tree.children)
+
+
+# ── Fitness Evaluation (v6: environment-driven) ──
 
 def evaluate_fitness(genome: GEPGenome, sim_components: dict, cfg: dict,
-                     feature_extractor=None) -> tuple:
+                     feature_extractor=None, environment=None) -> tuple:
     """
     Evaluate a genome's fitness by running simulation.
 
-    Also collects features if a FeatureExtractor is provided,
-    avoiding the need to re-run the simulation.
+    v6: fitness is environment-driven — particles must actively forage,
+    survive, and diversify. Anti-camping penalty ensures mobility.
 
     Args:
         genome: The GEP genome to evaluate
         sim_components: dict with 'particles', 'spatial_hash', 'integrator', 'step'
         cfg: configuration dict
         feature_extractor: optional FeatureExtractor to collect features during run
+        environment: optional EnvironmentLayer for v6 environment features
 
     Returns:
-        (fitness, features_12d, features_3d) tuple
+        (fitness, features_15d, features_3d) tuple
         fitness: float score (0.0 if invalid)
-        features_12d: 12D feature vector (or None)
+        features_15d: 15D feature vector (or None)
         features_3d: 3D MAP-Elites features (or None)
     """
     particles = sim_components['particles']
@@ -50,6 +58,7 @@ def evaluate_fitness(genome: GEPGenome, sim_components: dict, cfg: dict,
     # 1. Compile genome to bytecode
     try:
         genome.compile(cfg['gep']['bytecode_length'])
+        genome.compile_chemotaxis(cfg['gep']['bytecode_length'])
     except Exception as e:
         logger.warning(f"Compilation failed: {e}")
         return 0.0, None, None
@@ -60,101 +69,123 @@ def evaluate_fitness(genome: GEPGenome, sim_components: dict, cfg: dict,
         logger.debug("NaN/Inf in constants → fitness = 0")
         return 0.0, None, None
 
-    # 3. Set the potential formula in simulation
+    # 3. Set formulas in simulation
     tree = decode_gene(genome.potential_gene, genome.head_length)
     sim_step.set_potential(tree)
+    if genome.chemotaxis_gene:
+        from src.evolution.genome import decode_chemotaxis_gene
+        chemo_tree = decode_chemotaxis_gene(genome.chemotaxis_gene, genome.head_length)
+        sim_step.set_chemotaxis(chemo_tree)
 
-    # 4. Re-initialize particles
+    # 4. Re-initialize particles and environment
     seed = genome.random_seed
     particles.initialize(seed)
+    if environment is not None:
+        environment.initialize(seed)
 
     # 5. Run simulation
     steps = cfg['simulation'].get('steps_per_eval', 5000)
     sample_interval = cfg['novelty'].get('sample_interval', 500)
 
-    speed_variances = []
     survival_counts = []
+    speed_samples = []
     n = cfg['simulation']['num_particles']
+    total_energy_absorbed = 0.0
 
     if feature_extractor:
         feature_extractor.reset()
 
     for step in range(steps):
-        sim_step.step(particles)
+        sim_step.step(particles, environment)
 
-        # Sample features at intervals
+        # Sample at intervals
         if (step + 1) % sample_interval == 0:
             vel_x = particles.vel_x.to_numpy()
-            vel_y = particles.vel_y.to_numpy()
             alive = particles.alive.to_numpy()
 
-            # Speed variance
-            speeds = np.sqrt(vel_x**2 + vel_y**2)
-            speed_var = np.var(speeds[alive == 1]) if np.sum(alive) > 0 else 0.0
-            speed_variances.append(speed_var)
+            # Average speed (for anti-camping)
+            speeds = np.sqrt(vel_x**2 + particles.vel_y.to_numpy()**2)
+            avg_speed = np.mean(speeds[alive == 1]) if np.sum(alive) > 0 else 0.0
+            speed_samples.append(avg_speed)
 
-            # Survival count
+            # Survival count (for survival integral)
             alive_count = np.sum(alive)
             survival_counts.append(alive_count)
 
             # Full feature extraction if requested
             if feature_extractor:
-                feature_extractor.sample(particles, cfg)
+                feature_extractor.sample(particles, cfg, environment)
 
     # 6. Compute fitness components
     if not survival_counts:
         return 0.0, None, None
 
-    final_alive = survival_counts[-1]
-    survival_rate = final_alive / n
+    # ── Anti-camping: average speed must be above threshold ──
+    min_active_speed = cfg['safety'].get('min_active_speed', 0.1)
+    avg_speed_overall = np.mean(speed_samples) if speed_samples else 0.0
+    if avg_speed_overall < min_active_speed:
+        logger.debug(f"Anti-camping: avg_speed={avg_speed_overall:.4f} < {min_active_speed}")
+        return 0.0, None, None
 
-    # Dead universe filter
+    # Speed factor (soft penalty for low speed)
+    speed_factor = min(avg_speed_overall / 0.5, 1.0)
+
+    # ── Survival integral (area under alive_count curve) ──
+    survival_integral = np.sum(survival_counts) / (len(survival_counts) * n)
+
+    # Dead universe filter: survival integral
     min_survival = cfg['novelty'].get('min_survival_rate', 0.1)
-    if survival_rate < min_survival:
-        logger.debug(f"Dead universe: survival_rate={survival_rate:.3f} < {min_survival}")
+    if survival_integral < min_survival:
+        logger.debug(f"Dead universe: survival_integral={survival_integral:.3f} < {min_survival}")
         return 0.0, None, None
 
-    # Speed variance filter (all particles static)
-    avg_speed_var = np.mean(speed_variances) if speed_variances else 0.0
-    min_speed_var = cfg['novelty'].get('min_speed_variance', 0.001)
-    if avg_speed_var < min_speed_var:
-        logger.debug(f"All static: avg_speed_var={avg_speed_var:.6f} < {min_speed_var}")
-        return 0.0, None, None
+    # ── Energy-based fitness (v6 environment-driven) ──
+    # Collect energy statistics from final state
+    energy_np = particles.energy.to_numpy()
+    alive_np = particles.alive.to_numpy()
+    energy_alive = energy_np[alive_np == 1]
 
-    # 7. Multi-objective fitness
-    w1 = 0.4
-    f_survival = survival_rate
+    f_survival = survival_integral
 
-    w2 = 0.3
-    f_structure = min(avg_speed_var / 1.0, 1.0)
+    # Energy variance (encourages diverse strategies)
+    f_energy_var = 0.0
+    if len(energy_alive) > 1:
+        f_energy_var = min(float(np.var(energy_alive)) / 1.0, 1.0)
 
-    w3 = 0.3
-    if len(survival_counts) > 1:
-        survival_stability = 1.0 - (np.std(survival_counts) / max(np.mean(survival_counts), 1.0))
-        f_efficiency = max(0.0, survival_stability)
-    else:
-        f_efficiency = 0.0
+    # Structure complexity (speed variance as proxy)
+    f_structure = 0.0
+    if speed_samples:
+        speed_var = np.var(speed_samples)
+        f_structure = min(speed_var / 0.5, 1.0)
 
-    fitness = w1 * f_survival + w2 * f_structure + w3 * f_efficiency
+    # ── Multi-objective fitness ──
+    fitness = (0.4 * f_survival + 0.3 * f_energy_var + 0.3 * f_structure) * speed_factor
 
-    # 8. Parsimony pressure
+    # ── Constant formula penalty ──
+    tree = decode_gene(genome.potential_gene, genome.head_length)
+    if is_constant_tree(tree):
+        constant_penalty = cfg.get('evolution', {}).get('constant_penalty', 0.1)
+        fitness *= constant_penalty
+        logger.debug(f"Constant formula detected, fitness *= {constant_penalty}")
+
+    # 7. Parsimony pressure
     parsimony = cfg['evolution'].get('parsimony_pressure', 0.001)
     tree = decode_gene(genome.potential_gene, genome.head_length)
     effective_size = tree.size()
     fitness -= parsimony * effective_size
 
-    # 9. NaN check
+    # 8. NaN check
     if math.isnan(fitness) or math.isinf(fitness):
         return 0.0, None, None
 
-    # 10. Compute features if extractor was provided
-    features_12d = None
+    # 9. Compute features if extractor was provided
+    features_15d = None
     features_3d = None
     if feature_extractor:
-        features_12d = feature_extractor.compute_features()
+        features_15d = feature_extractor.compute_features()
         features_3d = feature_extractor.get_3d_features()
 
-    return max(0.0, fitness), features_12d, features_3d
+    return max(0.0, fitness), features_15d, features_3d
 
 
 # ── Feature Extraction (basic version for Phase 2) ──

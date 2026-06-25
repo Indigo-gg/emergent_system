@@ -45,7 +45,32 @@
       "Bash(ollama --help)",
       "Bash(curl -s http://localhost:11434/api/tags)",
       "Bash(python -m json.tool)",
-      "Bash(ollama rm *)"
+      "Bash(ollama rm *)",
+      "Bash(python -m pytest tests/test_vm.py -v --timeout=30)",
+      "Bash(python -m pytest tests/test_gep.py -v)",
+      "Bash(python -m pytest tests/test_environment.py -v)",
+      "Bash(python -m pytest tests/test_environment.py::test_particle_environment_interaction -v)",
+      "Bash(python -m pytest tests/test_environment.py::test_sample_field -v)",
+      "Bash(python -m pytest tests/test_potential.py::test_compile_end_to_end -v)",
+      "Bash(python -m pytest tests/test_evolution.py::test_evolution_loop_basic -v)",
+      "Bash(python -m pytest tests/test_evolution.py tests/test_potential.py tests/test_simulation.py tests/test_phase3_integration.py tests/test_monitoring.py -v)",
+      "Bash(python -m pytest tests/test_evolution.py tests/test_potential.py tests/test_simulation.py tests/test_phase3_integration.py -v)",
+      "Bash(python -c ' *)",
+      "Bash(python -m pytest tests/test_evolution.py tests/test_simulation.py tests/test_potential.py tests/test_phase3_integration.py -v)",
+      "Bash(python -m pytest tests/ -x -v --timeout=60)",
+      "Bash(python -m pytest tests/ -x -v)",
+      "Bash(python -m pytest tests/test_monitoring.py::test_evolution_monitor_check_all -v)",
+      "Bash(python -m pytest tests/ -v --deselect tests/test_monitoring.py::test_evolution_monitor_check_all)",
+      "Bash(python -m pytest tests/test_phase3_integration.py tests/test_evolution.py tests/test_simulation.py -v)",
+      "Bash(python -m pytest tests/test_db.py tests/test_evolution.py tests/test_map_elites.py tests/test_environment.py tests/test_features.py -v)",
+      "Bash(python -m py_compile src/main.py)",
+      "Bash(python -m py_compile src/storage/db.py)",
+      "Bash(python -m pytest tests/test_db.py tests/test_evolution.py tests/test_map_elites.py tests/test_features.py tests/test_gep.py tests/test_checkpoint.py -v --tb=short)",
+      "Bash(python scripts/preflight.py --config config/fast_debug.yaml)",
+      "Bash(tasklist)",
+      "Bash(sqlite3 *)",
+      "Bash(python -m pytest hard/tests/ -x -q)",
+      "Bash(python -m pytest hard/tests/test_gep.py hard/tests/test_features.py hard/tests/test_evolution.py hard/tests/test_simulation.py hard/tests/test_integrator.py hard/tests/test_potential.py hard/tests/test_vm.py hard/tests/test_environment.py -x -q)"
     ]
   }
 }

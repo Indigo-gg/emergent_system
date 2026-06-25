@@ -33,12 +33,20 @@ class MAPElites:
             'fft_amp': (0.0, 1.0),
         }
 
+        # Track observed feature min/max for adaptive ranges
+        self._feature_min = [float('inf'), float('inf'), float('inf')]
+        self._feature_max = [float('-inf'), float('-inf'), float('-inf')]
+        self._update_count = 0
+
     def try_archive(self, genome, features_3d: tuple, fitness: float,
                     features_12d: np.ndarray = None, seed: int = 0) -> bool:
         """
         Try to archive a genome in the grid.
         Returns True if the genome was archived (or replaced an inferior one).
         """
+        # Update adaptive ranges
+        self._update_ranges(features_3d)
+
         key = self._discretize(features_3d)
         formula = genome.to_formula() if hasattr(genome, 'to_formula') else ''
 
@@ -56,6 +64,28 @@ class MAPElites:
             self.grid[key] = cell_data
             return True
         return False
+
+    def _update_ranges(self, features_3d: tuple):
+        """Update adaptive feature ranges based on observed values."""
+        if features_3d is None:
+            return
+
+        self._update_count += 1
+        for i, val in enumerate(features_3d):
+            if val < self._feature_min[i]:
+                self._feature_min[i] = val
+            if val > self._feature_max[i]:
+                self._feature_max[i] = val
+
+        # Update ranges every 10 observations with 10% margin
+        if self._update_count % 10 == 0:
+            range_names = ['entropy', 'islands', 'fft_amp']
+            for i, name in enumerate(range_names):
+                low = self._feature_min[i]
+                high = self._feature_max[i]
+                if high > low:
+                    margin = (high - low) * 0.1
+                    self._ranges[name] = (max(0.0, low - margin), high + margin)
 
     def random_non_empty_cell(self, rng: random.Random = None) -> Optional[dict]:
         """Randomly select a non-empty grid cell (weighted by fitness)."""
@@ -207,8 +237,8 @@ class NoveltyArchive:
         }
 
     def _get_vectors(self) -> np.ndarray:
-        """Get all behavior vectors as a numpy array."""
+        """Get all behavior vectors as a numpy array (15D for v6)."""
         if not self.archive:
-            return np.zeros((0, 12), dtype=np.float32)
+            return np.zeros((0, 15), dtype=np.float32)
         vectors = [e['behavior_vector'] for e in self.archive]
         return np.array(vectors, dtype=np.float32)

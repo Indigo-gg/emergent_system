@@ -23,7 +23,10 @@ def _ensure_ti():
 
 
 def _run_vm(bytecode, constants, var_values, stack_depth=16):
-    """Helper: run VM on CPU and return result."""
+    """Helper: run VM on CPU and return result.
+
+    var_values: list of 11 values [dist, density, speed, angle, state0-3, neighbor_count, avg_nutrient, avg_waste]
+    """
     import taichi as ti
     _ensure_ti()
     from src.simulation.vm import vm_execute
@@ -31,15 +34,17 @@ def _run_vm(bytecode, constants, var_values, stack_depth=16):
     bc_np = np.array(bytecode, dtype=np.int32)
     const_np = np.array(constants, dtype=np.float32)
 
+    # Pad var_values to 11 elements if needed
+    v = list(var_values) + [0.0] * (11 - len(var_values))
+
     @ti.kernel
     def _run(bc: ti.types.ndarray(), consts: ti.types.ndarray(),
              d: ti.f32, dn: ti.f32, sp: ti.f32, an: ti.f32,
              s0: ti.f32, s1: ti.f32, s2: ti.f32, s3: ti.f32,
-             nc: ti.f32) -> ti.f32:
-        return vm_execute(bc, consts, d, dn, sp, an, s0, s1, s2, s3, nc, 16)
+             nc: ti.f32, avg_nut: ti.f32, avg_wst: ti.f32) -> ti.f32:
+        return vm_execute(bc, consts, d, dn, sp, an, s0, s1, s2, s3, nc, avg_nut, avg_wst, 16)
 
-    v = var_values
-    return _run(bc_np, const_np, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8])
+    return _run(bc_np, const_np, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10])
 
 
 # ── Opcode Tests ──
@@ -65,12 +70,12 @@ def test_op_var():
 
 
 def test_op_var_all_indices():
-    """OP_VAR: push each variable index."""
+    """OP_VAR: push each variable index (11 variables for v6)."""
     from src.simulation.vm import OP_VAR, OP_CLAMP, OP_HALT
-    for idx in range(9):
+    for idx in range(11):
         bytecode = [OP_VAR, idx, OP_CLAMP, OP_HALT]
         constants = [0.0]
-        vars = [float(i) for i in range(9)]
+        vars = [float(i) for i in range(11)]
         result = _run_vm(bytecode, constants, vars)
         assert abs(result - float(idx)) < 0.01, f"var[{idx}] expected {idx}, got {result}"
     print("PASS: test_op_var_all_indices")

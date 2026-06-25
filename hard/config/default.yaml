@@ -16,8 +16,31 @@ world:
   height: 100.0
   cell_size: 2.0
 
+environment:                        # v6: nutrient + waste field layer
+  nutrient_diffuse_rate: 0.08
+  nutrient_decay_rate: 0.001
+  nutrient_inject_interval: 60
+  nutrient_patch_count: 5
+  nutrient_patch_amount: 1.5
+  nutrient_drift_speed: 0.002
+  waste_production_rate: 0.15
+  waste_diffuse_rate: 0.05
+  waste_decay_rate: 0.005
+  waste_metabolism_factor: 2.0
+  base_metabolism: 0.01
+  move_cost: 0.005
+  absorb_rate: 0.5
+  dormant_metabolism: 0.001
+  max_dormant_ticks: 600
+
 gep:
-  terminal_set: ["dist", "density", "speed", "angle", "state_0", "state_1", "state_2", "state_3", "neighbor_count"]
+  # Terminal set A: potential U variables (symmetric quantities for momentum conservation)
+  terminal_set: ["dist", "density", "speed", "angle",
+                 "state_0", "state_1", "state_2", "state_3",
+                 "neighbor_count", "avg_nutrient", "avg_waste"]
+  # Terminal set B: chemotaxis F_env variables (environment gradient sensing)
+  terminal_set_chemotaxis: ["grad_nut_x", "grad_nut_y", "grad_waste_x", "grad_waste_y",
+                            "nutrient", "waste", "speed"]
   function_set: ["+", "-", "*", "sin", "cos", "tanh", "sqrt", "abs", "max", "min"]
   constant_range: [-5.0, 5.0]
   max_tree_depth: 12
@@ -27,6 +50,7 @@ gep:
 
 evolution:
   population_size: 10
+  constant_penalty: 0.1     # fitness multiplier for constant formulas (0.1 = 90% penalty)
   mutation_rates:
     point_mutation: 0.30
     constant_finetune: 0.20
@@ -39,10 +63,11 @@ evolution:
 map_elites:
   grid_features: ["entropy", "islands", "fft_freq"]
   resolution_per_dim: 15
-  all_features: ["entropy", "islands", "fft_freq", "angular_skew", "density_lap_var", "survival_decay"]
+  all_features: ["entropy", "islands", "fft_freq", "angular_skew", "density_lap_var",
+                 "survival_decay", "nutrient_consume_mean", "waste_peak_mean", "energy_skew"]
 
 novelty:
-  behavior_vector_dim: 12
+  behavior_vector_dim: 15
   k_neighbors: 15
   threshold_adaptive: true
   stale_generations: 10
@@ -51,6 +76,8 @@ novelty:
   min_survival_rate: 0.1
   min_speed_variance: 0.001
   max_entropy_ratio: 0.95
+  min_nutrient_consume: 0.001
+  max_energy_skew: 3.0
 
 rendering:
   resolution: [256, 256]
@@ -65,12 +92,15 @@ safety:
   max_force: 10.0
   max_speed: 5.0
   max_displacement_ratio: 0.5
+  hard_repulsion_epsilon: 0.01
+  hard_repulsion_strength: 100.0
+  min_active_speed: 0.1
 
 vlm:
-  provider: "ollama"                  # local | ollama
-  model: "qwen2.5vl:3b"              # Ollama model (Qwen2.5-VL 3B, ~3.2GB)
-  fallback_model: "llava:7b"          # Ollama fallback
-  base_url: "http://localhost:11434"  # Ollama endpoint (ollama provider only)
+  provider: "ollama"
+  model: "qwen2.5vl:3b"
+  fallback_model: "llava:7b"
+  base_url: "http://localhost:11434"
   daily_limit: 100
 
 checkpoint:

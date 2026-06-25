@@ -111,7 +111,7 @@ class ExperimentDB:
              features_3d[0] if len(features_3d) > 0 else 0,
              features_3d[1] if len(features_3d) > 1 else 0,
              features_3d[2] if len(features_3d) > 2 else 0,
-             json.dumps(features_12d) if features_12d else None,
+             json.dumps(features_12d.tolist() if hasattr(features_12d, 'tolist') else features_12d) if features_12d is not None else None,
              formula, seed)
         )
         self.conn.commit()
@@ -126,7 +126,7 @@ class ExperimentDB:
                 potential_formula, random_seed)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (gen, fitness, novelty_score,
-             json.dumps(features_12d) if features_12d else None,
+             json.dumps(features_12d.tolist() if hasattr(features_12d, 'tolist') else features_12d) if features_12d is not None else None,
              formula, seed)
         )
         self.conn.commit()

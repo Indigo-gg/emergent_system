@@ -272,7 +272,7 @@ def eliminate_dead_code(node: Node) -> Node:
 
 # ── Bytecode Compilation ──
 
-# Variable name → index mapping
+# Variable name → index mapping (potential U terminal set)
 VAR_MAP = {
     'dist': 0,
     'density': 1,
@@ -283,6 +283,19 @@ VAR_MAP = {
     'state_2': 6,
     'state_3': 7,
     'neighbor_count': 8,
+    'avg_nutrient': 9,
+    'avg_waste': 10,
+}
+
+# Chemotaxis terminal set (environment gradient sensing)
+CHEMOTAXIS_VAR_MAP = {
+    'grad_nut_x': 0,
+    'grad_nut_y': 1,
+    'grad_waste_x': 2,
+    'grad_waste_y': 3,
+    'nutrient': 4,
+    'waste': 5,
+    'speed': 6,
 }
 
 
@@ -398,3 +411,21 @@ def compile_potential(potential_tree: Node, max_len: int = 128):
     dudr_bc = compile_to_bytecode(dudr_tree, constants, max_len)
 
     return dudr_bc, constants
+
+
+# ── Convenience: compile chemotaxis expression ──
+
+def compile_chemotaxis(chemotaxis_tree: Node, max_len: int = 128):
+    """
+    Compile a chemotaxis expression tree to bytecode.
+
+    Unlike potential, chemotaxis directly outputs force (not potential),
+    so no symbolic differentiation is needed.
+
+    Terminal set uses CHEMOTAXIS_VAR_MAP indices.
+
+    Returns (bytecode, constants).
+    """
+    constants = []
+    bc = compile_to_bytecode(chemotaxis_tree, constants, max_len)
+    return bc, constants

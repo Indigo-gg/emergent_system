@@ -226,10 +226,75 @@ def render_gif(position_history: List[Tuple[np.ndarray, np.ndarray]],
     return output_path
 
 
+def render_environment_overlay(nutrient_field: np.ndarray, waste_field: np.ndarray,
+                               position_history: List[Tuple[np.ndarray, np.ndarray]],
+                               cfg: dict, output_path: str = None) -> str:
+    """
+    Render environment fields with particle trajectory overlay.
+
+    Layers:
+    - Bottom: nutrient field heatmap (Greens, alpha=0.3)
+    - Middle: waste field heatmap (Reds, alpha=0.3)
+    - Top: particle trajectory (time-encoded colors, alpha=0.6)
+
+    Args:
+        nutrient_field: 2D numpy array of nutrient concentrations
+        waste_field: 2D numpy array of waste concentrations
+        position_history: List of (pos_x, pos_y) tuples per frame
+        cfg: Configuration dict
+        output_path: Output file path
+
+    Returns:
+        Path to saved image
+    """
+    w = cfg['world']['width']
+    h = cfg['world']['height']
+    rows, cols = nutrient_field.shape
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    ax.set_xlim(0, w)
+    ax.set_ylim(0, h)
+    ax.set_aspect('equal')
+    ax.set_facecolor('black')
+
+    # Layer 1: Nutrient field (green)
+    nut_norm = nutrient_field / max(np.max(nutrient_field), 1e-10)
+    ax.imshow(nut_norm.T, origin='lower', extent=[0, w, 0, h],
+              cmap='Greens', alpha=0.5, interpolation='bilinear')
+
+    # Layer 2: Waste field (red)
+    waste_norm = waste_field / max(np.max(waste_field), 1e-10)
+    ax.imshow(waste_norm.T, origin='lower', extent=[0, w, 0, h],
+              cmap='Reds', alpha=0.4, interpolation='bilinear')
+
+    # Layer 3: Particle trajectory overlay
+    if position_history:
+        n_frames = len(position_history)
+        cmap = LinearSegmentedColormap.from_list('time', ['#0000FF', '#00FFFF', '#00FF00', '#FFFF00', '#FF0000'])
+        for i, (px, py) in enumerate(position_history):
+            color = cmap(i / max(n_frames - 1, 1))
+            alpha = 0.1 + 0.4 * (i / max(n_frames - 1, 1))
+            ax.scatter(px, py, c=[color], alpha=alpha, s=0.5, edgecolors='none')
+
+    ax.set_title('Environment + Trajectory Overlay')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+
+    if output_path is None:
+        output_path = 'env_overlay.png'
+
+    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else '.', exist_ok=True)
+    fig.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return output_path
+
+
 def render_novelty_package(genome, features_12d: np.ndarray,
                            position_history: List[Tuple[np.ndarray, np.ndarray]],
                            feature_timeseries: dict, cfg: dict,
-                           output_dir: str) -> dict:
+                           output_dir: str,
+                           nutrient_field: np.ndarray = None,
+                           waste_field: np.ndarray = None) -> dict:
     """
     Render the complete novelty package for VLM judgment.
 
@@ -262,13 +327,21 @@ def render_novelty_package(genome, features_12d: np.ndarray,
     curve_path = os.path.join(output_dir, f'gen_{gen:04d}_{genome_id[:8]}_curves.png')
     render_feature_curves(feature_timeseries, cfg, curve_path)
 
-    # 3. Text summary
+    # 3. Environment overlay (if data provided)
+    env_overlay_path = None
+    if nutrient_field is not None and waste_field is not None:
+        env_overlay_path = os.path.join(output_dir, f'gen_{gen:04d}_{genome_id[:8]}_env.png')
+        render_environment_overlay(nutrient_field, waste_field,
+                                   position_history, cfg, env_overlay_path)
+
+    # 4. Text summary
     formula = genome.to_formula() if hasattr(genome, 'to_formula') else 'N/A'
     summary = _build_text_summary(genome, features_12d, formula, gen)
 
     return {
         'trajectory_path': traj_path,
         'curve_path': curve_path,
+        'env_overlay_path': env_overlay_path,
         'summary': summary,
         'generation': gen,
         'genome_id': genome_id,

@@ -297,7 +297,7 @@ def should_call_vlm(features_12d, judged_features: list,
     if not judged_features:
         return True
 
-    # Always call VLM if novelty score is high (>3)
+    # Always call VLM if novelty score is high (>3) or bootstrap phase (>=100)
     if novelty_score >= 3.0:
         return True
 

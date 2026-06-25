@@ -71,6 +71,23 @@ def _make_full_cfg():
             'max_force': 10.0,
             'max_displacement_ratio': 0.5,
         },
+        'environment': {
+            'nutrient_diffuse_rate': 0.08,
+            'nutrient_decay_rate': 0.001,
+            'nutrient_inject_interval': 60,
+            'nutrient_patch_count': 3,
+            'nutrient_patch_amount': 1.5,
+            'nutrient_drift_speed': 0.002,
+            'waste_production_rate': 0.15,
+            'waste_diffuse_rate': 0.05,
+            'waste_decay_rate': 0.005,
+            'waste_metabolism_factor': 2.0,
+            'base_metabolism': 0.01,
+            'move_cost': 0.005,
+            'absorb_rate': 0.5,
+            'dormant_metabolism': 0.001,
+            'max_dormant_ticks': 600,
+        },
     }
 
 
@@ -96,7 +113,7 @@ def test_feature_extractor_with_simulation():
     features = fe.compute_features()
     feat3d = fe.get_3d_features()
 
-    assert features.shape == (12,)
+    assert features.shape == (15,), f"Expected 15D, got {features.shape}"
     assert len(feat3d) == 3
     assert not np.any(np.isnan(features))
     print(f"PASS: test_feature_extractor_with_simulation → features={features[:5]}")
@@ -282,6 +299,7 @@ def test_full_evolution_step():
     from src.simulation.spatial_hash import SpatialHash
     from src.simulation.integrator import Integrator
     from src.simulation.step import SimulationStep
+    from src.simulation.environment import EnvironmentLayer
 
     cfg = _make_full_cfg()
     rng = random.Random(42)
@@ -291,6 +309,7 @@ def test_full_evolution_step():
     spatial_hash = SpatialHash(cfg)
     integrator = Integrator(cfg)
     sim_step = SimulationStep(spatial_hash, integrator, cfg)
+    environment = EnvironmentLayer(cfg)
 
     sim_components = {
         'particles': particles,
@@ -311,19 +330,19 @@ def test_full_evolution_step():
         child = mutate(parent, cfg, rng)
 
         # 2. Evaluate fitness
-        fitness, _, _ = evaluate_fitness(child, sim_components, cfg)
+        fitness, _, _ = evaluate_fitness(child, sim_components, cfg, environment=environment)
 
         # 3. Extract features (simplified: use random for testing)
         features_3d = (rng.uniform(0, 1), rng.uniform(0, 50), rng.uniform(0, 1))
-        features_12d = np.random.rand(12).astype(np.float32)
-        features_12d[10] = 0.9  # good survival
-        features_12d[4] = 0.1   # ok speed var
+        features_15d = np.random.rand(15).astype(np.float32)
+        features_15d[10] = 0.9  # good survival
+        features_15d[4] = 0.1   # ok speed var
 
         # 4. Archive to MAP-Elites
-        me.try_archive(child, features_3d, fitness, features_12d, child.random_seed)
+        me.try_archive(child, features_3d, fitness, features_15d, child.random_seed)
 
         # 5. Try adding to Novelty Archive
-        na.try_add(child, features_12d, fitness, child.random_seed)
+        na.try_add(child, features_15d, fitness, child.random_seed)
 
         print(f"  gen={gen} fitness={fitness:.4f} grid={me.get_filled_count()} archive={na.size()}")
 

@@ -30,11 +30,16 @@ class Integrator:
 
     @ti.kernel
     def step(self,
-             pos_x: ti.types.ndarray(), pos_y: ti.types.ndarray(),
-             vel_x: ti.types.ndarray(), vel_y: ti.types.ndarray(),
-             force_x: ti.types.ndarray(), force_y: ti.types.ndarray(),
-             alive: ti.types.ndarray()):
-        """Advance all particles by one timestep."""
+             pos_x: ti.template(), pos_y: ti.template(),
+             vel_x: ti.template(), vel_y: ti.template(),
+             force_x: ti.template(), force_y: ti.template(),
+             alive: ti.template()):
+        """Advance all particles by one timestep.
+
+        Uses ti.template() — accepts Taichi fields (GPU, zero-copy) or
+        external arrays. In production, pass Taichi fields for GPU execution.
+        In tests, wrap numpy arrays with ti.field.from_numpy() first.
+        """
         n = pos_x.shape[0]
         for i in range(n):
             if alive[i] == 0:

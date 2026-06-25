@@ -43,14 +43,14 @@ def test_feature_extractor_reset():
 
 
 def test_compute_features_empty():
-    """Empty samples returns zero vector."""
+    """Empty samples returns zero vector (15D for v6)."""
     from src.evolution.features import FeatureExtractor
 
     cfg = _make_cfg()
     fe = FeatureExtractor(cfg)
     features = fe.compute_features()
 
-    assert features.shape == (12,)
+    assert features.shape == (15,), f"Expected 15D, got {features.shape}"
     assert np.all(features == 0.0)
     print("PASS: test_compute_features_empty")
 
@@ -76,7 +76,7 @@ def test_compute_features_with_samples():
 
     features = fe.compute_features()
 
-    assert features.shape == (12,)
+    assert features.shape == (15,), f"Expected 15D, got {features.shape}"
     assert not np.any(np.isnan(features))
     assert not np.any(np.isinf(features))
 

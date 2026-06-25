@@ -269,11 +269,11 @@ def test_compile_end_to_end():
     def _run(bc: ti.types.ndarray(), consts: ti.types.ndarray(),
              d: ti.f32, dn: ti.f32, sp: ti.f32, an: ti.f32,
              s0: ti.f32, s1: ti.f32, s2: ti.f32, s3: ti.f32,
-             nc: ti.f32) -> ti.f32:
-        return vm_execute(bc, consts, d, dn, sp, an, s0, s1, s2, s3, nc, 16)
+             nc: ti.f32, avg_nut: ti.f32, avg_wst: ti.f32) -> ti.f32:
+        return vm_execute(bc, consts, d, dn, sp, an, s0, s1, s2, s3, nc, avg_nut, avg_wst, 16)
 
     # Test at dist = 1.0: d(sin(x))/dx = cos(x), so cos(1.0) ≈ 0.5403
-    result = _run(bc_np, const_np, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    result = _run(bc_np, const_np, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     expected = np.cos(1.0)
     assert abs(result - expected) < 0.1, f"Expected ~{expected:.4f}, got {result}"
     print("PASS: test_compile_end_to_end")

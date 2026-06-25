@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def test_random_genome_creation():
-    """Random genome has correct gene lengths."""
+    """Random genome has correct gene lengths (2 active genes)."""
     from src.evolution.genome import random_genome, GEPGenome
 
     cfg = {
@@ -25,8 +25,11 @@ def test_random_genome_creation():
 
     assert isinstance(genome, GEPGenome)
     assert len(genome.potential_gene) == 17  # 8 + 9
-    assert len(genome.state_gene) == 17
-    assert len(genome.sense_gene) == 17
+    assert len(genome.chemotaxis_gene) == 17  # v6: chemotaxis gene
+    # state_gene, sense_gene, metabolism_gene removed (unused in simulation)
+    assert len(genome.state_gene) == 0
+    assert len(genome.sense_gene) == 0
+    assert len(genome.metabolism_gene) == 0
     assert genome.head_length == 8
     assert genome.random_seed != 0
     print("PASS: test_random_genome_creation")
