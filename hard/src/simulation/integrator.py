@@ -28,22 +28,36 @@ class Integrator:
         self.world_w = cfg['world']['width']
         self.world_h = cfg['world']['height']
 
+        # L-J forces can be large at close range; use separate limit
+        lj_cfg = cfg.get('lj', {})
+        if lj_cfg.get('enabled', False):
+            self.max_force = max(self.max_force, lj_cfg.get('max_force', 50.0))
+
     @ti.kernel
     def step(self,
              pos_x: ti.template(), pos_y: ti.template(),
              vel_x: ti.template(), vel_y: ti.template(),
              force_x: ti.template(), force_y: ti.template(),
-             alive: ti.template()):
+             alive: ti.template(),
+             phase: ti.template(),
+             phase_enabled: ti.i32):
         """Advance all particles by one timestep.
 
-        Uses ti.template() — accepts Taichi fields (GPU, zero-copy) or
-        external arrays. In production, pass Taichi fields for GPU execution.
-        In tests, wrap numpy arrays with ti.field.from_numpy() first.
+        Phase 4: When phase_enabled, max_speed is modulated by oscillation phase.
+        phase_mod = 0.5 + 0.5 * sin(phase) → range [0.0, 1.0]
+        effective_speed = max_speed * phase_mod
+        This creates collective "breathing" when particles synchronize.
         """
         n = pos_x.shape[0]
         for i in range(n):
             if alive[i] == 0:
                 continue
+
+            # Phase modulation: oscillates between 50% and 100% of max_speed
+            speed_limit = self.max_speed
+            if phase_enabled == 1:
+                phase_mod = 0.5 + 0.5 * ti.sin(phase[i])
+                speed_limit = self.max_speed * phase_mod
 
             # Clamp force magnitude
             fx = force_x[i]
@@ -61,11 +75,11 @@ class Integrator:
             vx = vel_x[i] + fx * self.dt
             vy = vel_y[i] + fy * self.dt
 
-            # Speed limit
+            # Speed limit (phase-modulated)
             speed = ti.sqrt(vx * vx + vy * vy)
-            if speed > self.max_speed:
-                vx *= self.max_speed / speed
-                vy *= self.max_speed / speed
+            if speed > speed_limit:
+                vx *= speed_limit / speed
+                vy *= speed_limit / speed
 
             # Displacement limit
             dx = vx * self.dt

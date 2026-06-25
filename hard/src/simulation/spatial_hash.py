@@ -29,8 +29,12 @@ class SpatialHash:
         self.cell_count = ti.field(dtype=ti.i32, shape=self.num_cells)
 
     @ti.kernel
-    def build(self, pos_x: ti.types.ndarray(), pos_y: ti.types.ndarray()):
-        """Build spatial hash from current particle positions."""
+    def build(self, pos_x: ti.template(), pos_y: ti.template()):
+        """Build spatial hash from current particle positions.
+
+        Accepts Taichi fields (GPU, zero-copy) directly — no CPU-GPU transfer.
+        Previously accepted numpy arrays which forced a to_numpy() round-trip.
+        """
         # Reset
         for cell in range(self.num_cells):
             self.cell_head[cell] = -1

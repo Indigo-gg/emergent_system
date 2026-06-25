@@ -33,6 +33,30 @@ environment:                        # v6: nutrient + waste field layer
   dormant_metabolism: 0.001
   max_dormant_ticks: 600
 
+lj:                                 # Phase 2: Lennard-Jones continuous force
+  sigma: 0.5                        # equilibrium distance (repulsion < σ < attraction)
+  epsilon: 1.0                      # potential well depth (stickiness)
+  cutoff: 2.5                       # interaction cutoff = 5σ
+  max_force: 50.0                   # force limit when L-J active
+  enabled: true
+
+reaction_diffusion:                 # Phase 3: Gray-Scott reaction-diffusion
+  da: 0.16                          # diffusion rate of signal A (slow)
+  db: 0.08                          # diffusion rate of signal B (fast)
+  feed: 0.055                       # feed rate (A replenishment)
+  kill: 0.062                       # kill rate (B removal)
+  enabled: true
+
+kuramoto:                           # Phase 4: Kuramoto phase synchronization
+  coupling_strength: 2.0            # K value — higher = faster sync
+  enabled: true
+
+trait:                              # Phase 5: Niche differentiation via trait vectors
+  dim: 3                            # [attack, gather, cooperation]
+  influence_strength: 0.5           # trait modulation amplitude on forces
+  mutation_sigma: 0.05              # variation on split/reproduction
+  enabled: true
+
 gep:
   # Terminal set A: potential U variables (symmetric quantities for momentum conservation)
   terminal_set: ["dist", "density", "speed", "angle",
@@ -40,7 +64,8 @@ gep:
                  "neighbor_count", "avg_nutrient", "avg_waste"]
   # Terminal set B: chemotaxis F_env variables (environment gradient sensing)
   terminal_set_chemotaxis: ["grad_nut_x", "grad_nut_y", "grad_waste_x", "grad_waste_y",
-                            "nutrient", "waste", "speed"]
+                            "nutrient", "waste", "speed",
+                            "grad_a_x", "grad_a_y", "grad_b_x", "grad_b_y"]
   function_set: ["+", "-", "*", "sin", "cos", "tanh", "sqrt", "abs", "max", "min"]
   constant_range: [-5.0, 5.0]
   max_tree_depth: 12

@@ -58,6 +58,22 @@ class EnvironmentLayer:
         self.grad_waste_x = ti.field(dtype=ti.f32, shape=(self.rows, self.cols))
         self.grad_waste_y = ti.field(dtype=ti.f32, shape=(self.rows, self.cols))
 
+        # Phase 3: Reaction-diffusion fields (Gray-Scott model)
+        rd_cfg = cfg.get('reaction_diffusion', {})
+        self.rd_enabled = rd_cfg.get('enabled', False)
+        self.rd_da = rd_cfg.get('da', 0.16)
+        self.rd_db = rd_cfg.get('db', 0.08)
+        self.rd_feed = rd_cfg.get('feed', 0.055)
+        self.rd_kill = rd_cfg.get('kill', 0.062)
+
+        # Signal A (slow diffusion, promoter) and Signal B (fast diffusion, inhibitor)
+        self.signal_a = ti.field(dtype=ti.f32, shape=(self.rows, self.cols))
+        self.signal_b = ti.field(dtype=ti.f32, shape=(self.rows, self.cols))
+        self.grad_a_x = ti.field(dtype=ti.f32, shape=(self.rows, self.cols))
+        self.grad_a_y = ti.field(dtype=ti.f32, shape=(self.rows, self.cols))
+        self.grad_b_x = ti.field(dtype=ti.f32, shape=(self.rows, self.cols))
+        self.grad_b_y = ti.field(dtype=ti.f32, shape=(self.rows, self.cols))
+
         # Nutrient hotspot patches (drifting injection points)
         # Stored as flat arrays for GPU access
         self.max_patches = 16
@@ -105,6 +121,8 @@ class EnvironmentLayer:
         for i, j in self.nutrient_field:
             self.nutrient_field[i, j] = 0.0
             self.waste_field[i, j] = 0.0
+            self.signal_a[i, j] = 1.0   # A starts at 1.0 (full)
+            self.signal_b[i, j] = 0.0   # B starts at 0.0
 
     @ti.kernel
     def environment_step(self):
@@ -139,6 +157,10 @@ class EnvironmentLayer:
                          4.0 * self.waste_field[i, j])
             val = self.waste_field[i, j] + self.waste_diffuse * laplacian - self.waste_decay * self.waste_field[i, j]
             self.waste_field[i, j] = ti.max(val, 0.0)
+
+        # 3. Reaction-diffusion (Gray-Scott) for signal A and B
+        if self.rd_enabled:
+            self._reaction_diffusion_step()
 
         # 3. Nutrient injection at drifting hotspots
         for p in range(self.n_patches):
@@ -176,8 +198,42 @@ class EnvironmentLayer:
             self.patch_cy[p] = self.patch_cy[p] - ti.floor(self.patch_cy[p] / wh) * wh
 
     @ti.kernel
+    def _reaction_diffusion_step(self):
+        """Gray-Scott reaction-diffusion for signal A and B.
+
+        dA/dt = Da * ∇²A - A*B² + f*(1-A)
+        dB/dt = Db * ∇²B + A*B² - (k+f)*B
+
+        Uses double-buffering to avoid read-write conflicts.
+        """
+        # Temporary buffers for new values
+        for i, j in self.signal_a:
+            ip = (i + 1) % self.rows
+            im = (i - 1 + self.rows) % self.rows
+            jp = (j + 1) % self.cols
+            jm = (j - 1 + self.cols) % self.cols
+
+            a = self.signal_a[i, j]
+            b = self.signal_b[i, j]
+
+            # Laplacians
+            lap_a = (self.signal_a[ip, j] + self.signal_a[im, j] +
+                     self.signal_a[i, jp] + self.signal_a[i, jm] - 4.0 * a)
+            lap_b = (self.signal_b[ip, j] + self.signal_b[im, j] +
+                     self.signal_b[i, jp] + self.signal_b[i, jm] - 4.0 * b)
+
+            # Gray-Scott equations
+            abb = a * b * b
+            new_a = a + self.rd_da * lap_a - abb + self.rd_feed * (1.0 - a)
+            new_b = b + self.rd_db * lap_b + abb - (self.rd_kill + self.rd_feed) * b
+
+            # Clamp to valid range
+            self.signal_a[i, j] = ti.math.clamp(new_a, 0.0, 1.0)
+            self.signal_b[i, j] = ti.math.clamp(new_b, 0.0, 1.0)
+
+    @ti.kernel
     def compute_gradients(self):
-        """Precompute spatial gradients of nutrient and waste fields (central difference)."""
+        """Precompute spatial gradients of all fields (central difference)."""
         cs = self.cell_size
         inv_2cs = 1.0 / (2.0 * cs)
 
@@ -195,6 +251,12 @@ class EnvironmentLayer:
             self.grad_waste_x[i, j] = (self.waste_field[i, jp] - self.waste_field[i, jm]) * inv_2cs
             self.grad_waste_y[i, j] = (self.waste_field[ip, j] - self.waste_field[im, j]) * inv_2cs
 
+            # ∇signal_a and ∇signal_b (reaction-diffusion channels)
+            self.grad_a_x[i, j] = (self.signal_a[i, jp] - self.signal_a[i, jm]) * inv_2cs
+            self.grad_a_y[i, j] = (self.signal_a[ip, j] - self.signal_a[im, j]) * inv_2cs
+            self.grad_b_x[i, j] = (self.signal_b[i, jp] - self.signal_b[i, jm]) * inv_2cs
+            self.grad_b_y[i, j] = (self.signal_b[ip, j] - self.signal_b[im, j]) * inv_2cs
+
     @ti.kernel
     def particle_environment_interaction(self,
                                          pos_x: ti.template(),
@@ -204,6 +266,8 @@ class EnvironmentLayer:
                                          energy: ti.template(),
                                          dormant_ticks: ti.template(),
                                          alive: ti.template(),
+                                         trait: ti.template(),
+                                         trait_enabled: ti.i32,
                                          total_nutrient_absorbed: ti.f32) -> ti.f32:
         """
         Environment-particle interaction:
@@ -254,7 +318,11 @@ class EnvironmentLayer:
                 continue
 
             # Active particle: absorb nutrient
-            nutrient_gain = nut_val * self.absorb_rate
+            # Phase 5: trait[1] (gather efficiency) modulates absorb rate
+            effective_absorb = self.absorb_rate
+            if trait_enabled == 1:
+                effective_absorb = self.absorb_rate * (0.5 + trait[i, 1])
+            nutrient_gain = nut_val * effective_absorb
             energy[i] += nutrient_gain
             absorbed_total += nutrient_gain
 

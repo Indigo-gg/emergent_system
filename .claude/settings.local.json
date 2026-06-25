@@ -70,7 +70,12 @@
       "Bash(tasklist)",
       "Bash(sqlite3 *)",
       "Bash(python -m pytest hard/tests/ -x -q)",
-      "Bash(python -m pytest hard/tests/test_gep.py hard/tests/test_features.py hard/tests/test_evolution.py hard/tests/test_simulation.py hard/tests/test_integrator.py hard/tests/test_potential.py hard/tests/test_vm.py hard/tests/test_environment.py -x -q)"
+      "Bash(python -m pytest hard/tests/test_gep.py hard/tests/test_features.py hard/tests/test_evolution.py hard/tests/test_simulation.py hard/tests/test_integrator.py hard/tests/test_potential.py hard/tests/test_vm.py hard/tests/test_environment.py -x -q)",
+      "Bash(python -m pytest tests/test_spatial_hash.py -v --timeout=60、)",
+      "Bash(conda info *)",
+      "Bash(conda run *)",
+      "Bash(D:/envs/anaconda/envs/llm3.12/python.exe -c \"import taichi; print\\(taichi.__version__\\)\")",
+      "Bash(D:/envs/anaconda/envs/gwlalg/python.exe -c \"import taichi; print\\(taichi.__version__\\)\")"
     ]
   }
 }

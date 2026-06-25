@@ -296,6 +296,10 @@ CHEMOTAXIS_VAR_MAP = {
     'nutrient': 4,
     'waste': 5,
     'speed': 6,
+    'grad_a_x': 7,      # Phase 3: signal A gradient x
+    'grad_a_y': 8,      # Phase 3: signal A gradient y
+    'grad_b_x': 9,      # Phase 3: signal B gradient x
+    'grad_b_y': 10,     # Phase 3: signal B gradient y
 }
 
 

@@ -43,6 +43,7 @@ def _make_fields(n):
         'force_x': ti.field(dtype=ti.f32, shape=n),
         'force_y': ti.field(dtype=ti.f32, shape=n),
         'alive': ti.field(dtype=ti.i32, shape=n),
+        'phase': ti.field(dtype=ti.f32, shape=n),
     }
 
 
@@ -86,7 +87,7 @@ def test_zero_force_no_movement():
     f = _make_fields(n)
     _load(f, pos_x, pos_y, vel_x, vel_y, force_x, force_y, alive)
     integ.step(f['pos_x'], f['pos_y'], f['vel_x'], f['vel_y'],
-               f['force_x'], f['force_y'], f['alive'])
+               f['force_x'], f['force_y'], f['alive'], f['phase'], 0)
     px, py, _, _ = _dump(f)
 
     np.testing.assert_allclose(px, pos_x_orig, atol=1e-6,
@@ -150,7 +151,7 @@ def test_speed_limit():
     f = _make_fields(n)
     _load(f, pos_x, pos_y, vel_x, vel_y, force_x, force_y, alive)
     integ.step(f['pos_x'], f['pos_y'], f['vel_x'], f['vel_y'],
-               f['force_x'], f['force_y'], f['alive'])
+               f['force_x'], f['force_y'], f['alive'], f['phase'], 0)
     _, _, vx, vy = _dump(f)
 
     speeds = np.sqrt(vx**2 + vy**2)
@@ -180,7 +181,7 @@ def test_force_limit():
     f = _make_fields(n)
     _load(f, pos_x, pos_y, vel_x, vel_y, force_x, force_y, alive)
     integ.step(f['pos_x'], f['pos_y'], f['vel_x'], f['vel_y'],
-               f['force_x'], f['force_y'], f['alive'])
+               f['force_x'], f['force_y'], f['alive'], f['phase'], 0)
     _, _, vx, vy = _dump(f)
 
     speeds = np.sqrt(vx**2 + vy**2)
@@ -210,7 +211,7 @@ def test_periodic_boundary():
     f = _make_fields(n)
     _load(f, pos_x, pos_y, vel_x, vel_y, force_x, force_y, alive)
     integ.step(f['pos_x'], f['pos_y'], f['vel_x'], f['vel_y'],
-               f['force_x'], f['force_y'], f['alive'])
+               f['force_x'], f['force_y'], f['alive'], f['phase'], 0)
     px, py, _, _ = _dump(f)
 
     assert np.all(px >= 0) and np.all(px < 100), f"pos_x out of bounds: {px}"
@@ -240,7 +241,7 @@ def test_dead_particles_skipped():
     f = _make_fields(n)
     _load(f, pos_x, pos_y, vel_x, vel_y, force_x, force_y, alive)
     integ.step(f['pos_x'], f['pos_y'], f['vel_x'], f['vel_y'],
-               f['force_x'], f['force_y'], f['alive'])
+               f['force_x'], f['force_y'], f['alive'], f['phase'], 0)
     px, _, _, _ = _dump(f)
 
     assert px[1] == pos_x_orig[1], "Dead particle 1 moved"

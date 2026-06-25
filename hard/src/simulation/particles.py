@@ -3,6 +3,9 @@ Particle state management using Taichi fields.
 
 State per particle: [x, y, vx, vy, state_0..state_3, energy, force_x, force_y, alive, dormant_ticks]
 All stored as separate Taichi fields (SoA layout for GPU coalescing).
+
+Phase 4 additions: phase, dphase (Kuramoto oscillators)
+Phase 5 additions: trait (3D attribute vector for niche differentiation)
 """
 
 import taichi as ti
@@ -41,6 +44,13 @@ class ParticleSystem:
 
         # Alive flag
         self.alive = ti.field(dtype=ti.i32, shape=self.n)
+
+        # Phase 4: Kuramoto oscillator state
+        self.phase = ti.field(dtype=ti.f32, shape=self.n)    # current phase [0, 2π]
+        self.dphase = ti.field(dtype=ti.f32, shape=self.n)   # natural frequency (per-individual)
+
+        # Phase 5: Trait vector (3D attribute for niche differentiation)
+        self.trait = ti.field(dtype=ti.f32, shape=(self.n, 3))
 
     @ti.kernel
     def initialize(self, seed: ti.i32):
@@ -94,6 +104,20 @@ class ParticleSystem:
             self.alive[i] = 1
             self.energy[i] = 1.0
             self.dormant_ticks[i] = 0
+
+            # Phase 4: Kuramoto oscillator — random initial phase and natural frequency
+            self.phase[i] = r1 * 6.28318  # [0, 2π]
+            self.dphase[i] = 0.5 + r2 * 1.5  # natural frequency ω ∈ [0.5, 2.0]
+
+            # Phase 5: Trait vector — random initial attributes [0, 1]
+            self.trait[i, 0] = r3           # attack tendency
+            self.trait[i, 1] = r4           # gather efficiency
+            # trait[2] (cooperation) needs another random number
+            state5 = state4 * C1 + C2
+            state5 = state5 ^ (state5 >> 16)
+            state5 = state5 * C3
+            r5 = ti.cast(state5, ti.f32) / MAX_U32
+            self.trait[i, 2] = r5           # cooperation willingness
 
     @ti.kernel
     def reset_forces(self):

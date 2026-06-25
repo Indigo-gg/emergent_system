@@ -1,8 +1,12 @@
 """
 Single-step simulation: assembles spatial hash + dual-force computation + integration.
 
-v6 dual-force architecture:
-  F_total = F_particle + F_env
+v7 force architecture:
+  F_total = F_lj + F_particle + F_env
+
+  F_lj: Lennard-Jones continuous repulsion-attraction (Phase 2)
+    - Replaces hard collision threshold with smooth force field
+    - Enables soft "membrane" structures
 
   F_particle: particle-particle interaction via GEP potential U
     - Terminal set includes symmetric avg_nutrient/avg_waste at midpoint
@@ -12,7 +16,7 @@ v6 dual-force architecture:
     - GEP-evolved chemotaxis formula
     - Reads ∇nutrient and ∇waste at particle position
 
-Hard collision: post-integration safety net for overflow particles.
+Hard collision: optional post-integration safety net (disabled when L-J is active).
 """
 
 import taichi as ti
@@ -22,6 +26,8 @@ from src.simulation.vm import vm_execute, vm_execute_chemotaxis
 from src.simulation.potential import (
     Const, Var, Add, Mul, Neg, Sin, compile_potential, compile_chemotaxis
 )
+from src.simulation.lj_potential import LennardJonesPotential
+from src.simulation.kuramoto import KuramotoSync
 
 HARD_REPULSION_EPSILON = 0.01
 HARD_REPULSION_STRENGTH = 100.0
@@ -40,7 +46,20 @@ class SimulationStep:
         self.bytecode_len = cfg['gep']['bytecode_length']
         self.sense_radius = cfg['world']['cell_size'] * 1.5
 
-        # Hard collision parameters
+        # Lennard-Jones potential (Phase 2)
+        self.lj = LennardJonesPotential(cfg)
+        self.lj_enabled = self.lj.enabled
+
+        # Kuramoto phase synchronization (Phase 4)
+        self.kuramoto = KuramotoSync(cfg)
+        self.kuramoto_enabled = self.kuramoto.enabled
+
+        # Trait vector modulation (Phase 5)
+        trait_cfg = cfg.get('trait', {})
+        self.trait_enabled = trait_cfg.get('enabled', False)
+        self.trait_strength = trait_cfg.get('influence_strength', 0.5)
+
+        # Hard collision parameters (fallback when L-J disabled)
         self.hard_eps = cfg['safety'].get('hard_repulsion_epsilon', 0.01)
         self.hard_strength = cfg['safety'].get('hard_repulsion_strength', 100.0)
 
@@ -103,6 +122,7 @@ class SimulationStep:
                        state: ti.template(),
                        force_x: ti.template(), force_y: ti.template(),
                        alive: ti.template(),
+                       trait: ti.template(),
                        bytecode: ti.types.ndarray(),
                        constants: ti.types.ndarray(),
                        chemo_bytecode: ti.types.ndarray(),
@@ -112,9 +132,22 @@ class SimulationStep:
                        grad_nut_x: ti.template(),
                        grad_nut_y: ti.template(),
                        grad_waste_x: ti.template(),
-                       grad_waste_y: ti.template()):
+                       grad_waste_y: ti.template(),
+                       grad_a_x: ti.template(),
+                       grad_a_y: ti.template(),
+                       grad_b_x: ti.template(),
+                       grad_b_y: ti.template(),
+                       lj_sigma: ti.f32,
+                       lj_epsilon: ti.f32,
+                       lj_cutoff: ti.f32,
+                       lj_enabled: ti.i32,
+                       trait_strength: ti.f32,
+                       trait_enabled: ti.i32):
         """
-        Compute dual-force on all particles:
+        Compute triple-force on all particles:
+
+        F_lj: Lennard-Jones continuous repulsion-attraction
+          - Smooth force field replacing hard collision threshold
 
         F_particle: particle-particle interaction via GEP potential
           - Uses symmetric avg_nutrient/avg_waste at midpoint
@@ -162,6 +195,26 @@ class SimulationStep:
                             dist = ti.sqrt(d2)
                             angle = ti.atan2(dy, dx)
 
+                            # ── Lennard-Jones force (Phase 2) ──
+                            if lj_enabled == 1:
+                                sr6 = (lj_sigma / dist) ** 6
+                                sr12 = sr6 * sr6
+                                f_lj = 24.0 * lj_epsilon * (2.0 * sr12 - sr6) / dist
+                                fx_particle += f_lj * dx / dist
+                                fy_particle += f_lj * dy / dist
+
+                            # ── Trait similarity modulation (Phase 5) ──
+                            trait_factor = 1.0
+                            if trait_enabled == 1:
+                                # Inner product of trait vectors → similarity
+                                similarity = (trait[i, 0] * trait[idx, 0] +
+                                              trait[i, 1] * trait[idx, 1] +
+                                              trait[i, 2] * trait[idx, 2])
+                                # Normalize: dot ∈ [0,3] → sim_norm ∈ [-1,1]
+                                sim_norm = similarity / 1.5 - 1.0
+                                # Modulation factor: similar→attract more, different→repel more
+                                trait_factor = 1.0 + sim_norm * trait_strength
+
                             # Compute avg_nutrient and avg_waste at midpoint (symmetric)
                             mid_x = (qx + pos_x[idx]) * 0.5
                             mid_y = (qy + pos_y[idx]) * 0.5
@@ -181,8 +234,9 @@ class SimulationStep:
                             )
 
                             # Force: F = -dU/dr, direction toward neighbor
-                            fx_ij = dudr * dx / dist
-                            fy_ij = dudr * dy / dist
+                            # Apply trait modulation: similar traits attract, different repel
+                            fx_ij = dudr * dx / dist * trait_factor
+                            fy_ij = dudr * dy / dist * trait_factor
 
                             fx_particle += fx_ij
                             fy_particle += fy_ij
@@ -223,6 +277,24 @@ class SimulationStep:
                    grad_waste_y[i1, j0] * (1.0 - fx_frac) * fy_frac +
                    grad_waste_y[i1, j1] * fx_frac * fy_frac)
 
+            # Bilinear interpolation of reaction-diffusion gradients (Phase 3)
+            gax = (grad_a_x[i0, j0] * (1.0 - fx_frac) * (1.0 - fy_frac) +
+                   grad_a_x[i0, j1] * fx_frac * (1.0 - fy_frac) +
+                   grad_a_x[i1, j0] * (1.0 - fx_frac) * fy_frac +
+                   grad_a_x[i1, j1] * fx_frac * fy_frac)
+            gay = (grad_a_y[i0, j0] * (1.0 - fx_frac) * (1.0 - fy_frac) +
+                   grad_a_y[i0, j1] * fx_frac * (1.0 - fy_frac) +
+                   grad_a_y[i1, j0] * (1.0 - fx_frac) * fy_frac +
+                   grad_a_y[i1, j1] * fx_frac * fy_frac)
+            gbx = (grad_b_x[i0, j0] * (1.0 - fx_frac) * (1.0 - fy_frac) +
+                   grad_b_x[i0, j1] * fx_frac * (1.0 - fy_frac) +
+                   grad_b_x[i1, j0] * (1.0 - fx_frac) * fy_frac +
+                   grad_b_x[i1, j1] * fx_frac * fy_frac)
+            gby = (grad_b_y[i0, j0] * (1.0 - fx_frac) * (1.0 - fy_frac) +
+                   grad_b_y[i0, j1] * fx_frac * (1.0 - fy_frac) +
+                   grad_b_y[i1, j0] * (1.0 - fx_frac) * fy_frac +
+                   grad_b_y[i1, j1] * fx_frac * fy_frac)
+
             # Local nutrient/waste values
             nut_local = (nutrient_field[i0, j0] * (1.0 - fx_frac) * (1.0 - fy_frac) +
                          nutrient_field[i0, j1] * fx_frac * (1.0 - fy_frac) +
@@ -240,6 +312,7 @@ class SimulationStep:
                 gnx, gny, gwx, gwy,
                 nut_local, wst_local,
                 speed_i,
+                gax, gay, gbx, gby,
                 self.vm_stack_depth
             )
 
@@ -314,43 +387,61 @@ class SimulationStep:
             particles: ParticleSystem instance
             environment: EnvironmentLayer instance (required for v6 dual-force)
         """
-        # 1. Build spatial hash
-        pos_x_np = particles.pos_x.to_numpy()
-        pos_y_np = particles.pos_y.to_numpy()
-        self.spatial_hash.build(pos_x_np, pos_y_np)
+        # 1. Build spatial hash (GPU direct — no CPU round-trip)
+        self.spatial_hash.build(particles.pos_x, particles.pos_y)
 
         # 2. Environment step (diffuse + decay + inject + gradients)
         environment.environment_step()
         environment.compute_gradients()
 
-        # 3. Compute dual-force (F_particle + F_env)
+        # 3. Compute force (F_lj + F_particle + F_env)
         self.compute_forces(
             particles.pos_x, particles.pos_y,
             particles.vel_x, particles.vel_y,
             particles.state,
             particles.force_x, particles.force_y,
             particles.alive,
+            particles.trait,
             self.bytecode_np, self.constants_np,
             self.chemo_bytecode_np, self.chemo_constants_np,
             environment.nutrient_field, environment.waste_field,
             environment.grad_nut_x, environment.grad_nut_y,
-            environment.grad_waste_x, environment.grad_waste_y
+            environment.grad_waste_x, environment.grad_waste_y,
+            environment.grad_a_x, environment.grad_a_y,
+            environment.grad_b_x, environment.grad_b_y,
+            self.lj.sigma, self.lj.epsilon, self.lj.cutoff,
+            int(self.lj_enabled),
+            self.trait_strength, int(self.trait_enabled)
         )
 
         # 4. Integrate — pass Taichi fields directly (runs on GPU, no transfer)
+        # Phase 4: phase modulation of speed when Kuramoto enabled
         self.integrator.step(
             particles.pos_x, particles.pos_y,
             particles.vel_x, particles.vel_y,
             particles.force_x, particles.force_y,
-            particles.alive
+            particles.alive,
+            particles.phase,
+            int(self.kuramoto_enabled)
         )
 
-        # 5. Hard collision protection (post-integration)
-        self.apply_hard_collision(
-            particles.pos_x, particles.pos_y,
-            particles.force_x, particles.force_y,
-            particles.alive
-        )
+        # 4.5 Kuramoto phase synchronization (Phase 4)
+        if self.kuramoto_enabled:
+            self.kuramoto.step(
+                particles.phase, particles.dphase,
+                particles.alive,
+                particles.pos_x, particles.pos_y,
+                self.spatial_hash,
+                self.sense_radius
+            )
+
+        # 5. Hard collision protection (only when L-J disabled)
+        if not self.lj_enabled:
+            self.apply_hard_collision(
+                particles.pos_x, particles.pos_y,
+                particles.force_x, particles.force_y,
+                particles.alive
+            )
 
         # 6. Particle-environment interaction (energy, waste, dormancy)
         environment.particle_environment_interaction(
@@ -358,5 +449,7 @@ class SimulationStep:
             particles.vel_x, particles.vel_y,
             particles.energy, particles.dormant_ticks,
             particles.alive,
+            particles.trait,
+            int(self.trait_enabled),
             0.0
         )

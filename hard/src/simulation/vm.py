@@ -71,6 +71,10 @@ CHEMO_VAR_GRAD_WASTE_Y = 3
 CHEMO_VAR_NUTRIENT = 4
 CHEMO_VAR_WASTE = 5
 CHEMO_VAR_SPEED = 6
+CHEMO_VAR_GRAD_A_X = 7     # Phase 3: signal A gradient x
+CHEMO_VAR_GRAD_A_Y = 8     # Phase 3: signal A gradient y
+CHEMO_VAR_GRAD_B_X = 9     # Phase 3: signal B gradient x
+CHEMO_VAR_GRAD_B_Y = 10    # Phase 3: signal B gradient y
 
 
 @ti.func
@@ -108,7 +112,8 @@ def _get_var(var_idx: ti.i32,
 @ti.func
 def _get_chemo_var(var_idx: ti.i32,
                    v0: ti.f32, v1: ti.f32, v2: ti.f32, v3: ti.f32,
-                   v4: ti.f32, v5: ti.f32, v6: ti.f32) -> ti.f32:
+                   v4: ti.f32, v5: ti.f32, v6: ti.f32,
+                   v7: ti.f32, v8: ti.f32, v9: ti.f32, v10: ti.f32) -> ti.f32:
     """Select chemotaxis variable by index."""
     result = 0.0
     if var_idx == 0:
@@ -125,6 +130,14 @@ def _get_chemo_var(var_idx: ti.i32,
         result = v5
     elif var_idx == 6:
         result = v6
+    elif var_idx == 7:
+        result = v7
+    elif var_idx == 8:
+        result = v8
+    elif var_idx == 9:
+        result = v9
+    elif var_idx == 10:
+        result = v10
     return result
 
 
@@ -381,12 +394,15 @@ def vm_execute_chemotaxis(bytecode: ti.types.ndarray(),
                           var_grad_wx: ti.f32, var_grad_wy: ti.f32,
                           var_nutrient: ti.f32, var_waste: ti.f32,
                           var_speed: ti.f32,
+                          var_grad_ax: ti.f32, var_grad_ay: ti.f32,
+                          var_grad_bx: ti.f32, var_grad_by: ti.f32,
                           stack_depth: ti.i32) -> ti.f32:
     """
     Execute chemotaxis bytecode — environment gradient → force.
 
     Terminal set: grad_nut_x, grad_nut_y, grad_waste_x, grad_waste_y,
-                  nutrient, waste, speed
+                  nutrient, waste, speed,
+                  grad_a_x, grad_a_y, grad_b_x, grad_b_y
     """
     stack = ti.Vector([0.0] * 16)
     sp = 0
@@ -410,7 +426,8 @@ def vm_execute_chemotaxis(bytecode: ti.types.ndarray(),
                 stack[sp] = _get_chemo_var(
                     idx,
                     var_grad_nx, var_grad_ny, var_grad_wx, var_grad_wy,
-                    var_nutrient, var_waste, var_speed
+                    var_nutrient, var_waste, var_speed,
+                    var_grad_ax, var_grad_ay, var_grad_bx, var_grad_by
                 )
             pc += 2
 
